@@ -136,6 +136,19 @@
   }
   a.detail-card { text-decoration: none; color: inherit; }
   a.detail-card:hover .details-btn { background: var(--accent); color: #fff; }
+
+  .detail-hero { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+  .detail-poster { width: 220px; max-width: 40vw; flex: 0 0 auto; }
+  .detail-poster img { width: 100%; border-radius: 14px; border: 1px solid var(--border); display: block; }
+  .detail-poster .noimg { aspect-ratio: 2/3; border: 1px solid var(--border); border-radius: 14px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
+  .detail-info { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 8px; }
+  .detail-title { font-size: 22px; font-weight: 700; letter-spacing: -0.4px; }
+  .detail-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .detail-chips span { font-size: 11px; font-weight: 600; color: #c8d6e5; background: rgba(255,255,255,.05); border: 1px solid var(--border); padding: 4px 10px; border-radius: 999px; }
+  .detail-synopsis { font-size: 13.5px; line-height: 1.6; color: #c3d0de; }
+  .detail-links { margin-top: 6px; }
+  .detail-links .actions { max-width: 640px; }
+  @media (max-width: 560px) { .detail-hero { flex-direction: column; align-items: stretch; } .detail-poster { width: 100%; max-width: 240px; margin: 0 auto; } }
 </style>
 </head>
 <body>
@@ -198,7 +211,8 @@
     if (route.view === "detail") {
       sv.style.display = "none";
       dv.style.display = "block";
-      renderDetail(route.key);   // stub in this task, real in Task 6
+      state.currentKey = route.key;
+      renderDetail(route.key);
     } else {
       dv.style.display = "none";
       sv.style.display = "block";
@@ -212,10 +226,86 @@
   }
   window.addEventListener("hashchange", renderRoute);
 
-  function renderDetail(key) {
+  async function renderDetail(key) {
     const dv = document.getElementById("view-detail");
-    dv.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">' +
-      '<a class="back-btn" href="#/">← Back to results</a><br><br>Detail view (built in a later task) for <b>' + esc(key) + '</b></div>';
+    const post = state.postById[key];
+    if (!post) {
+      dv.innerHTML = '<div class="error-box">That release is no longer available. <a href="#/" style="color:var(--accent)">← Back to results</a></div>';
+      window.scrollTo(0, 0);
+      return;
+    }
+    dv.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--muted)">' +
+      '<div class="spin"></div><div>Loading release…</div></div>';
+
+    const item = { post: post, parsed: parseTitle(post.title), seasonal: parseSeasonal(post.title) };
+    // Query TVMaze with the base title (season/episode markers stripped) so
+    // episodes resolve to their show's metadata, not a 404.
+    const meta = await fetchTvMazeMeta(baseTitle(item.parsed.name));
+    if (state.currentKey !== key) return;
+
+    const hubs = (post.direct || []).map(function (h) { return { url: h.url || h, qual: h.qual || null }; });
+    const resolved = await (hubs.length ? Resolve.hubs(hubs, post.link)
+      : Promise.resolve({ rows: [], best: null, results: [] }));
+    if (state.currentKey !== key) return;
+
+    const badgeLine = item.parsed.qualities.length ? item.parsed.qualities.join(" · ") : null;
+    const rowsHtml = resolved.rows.length
+      ? resolved.rows.map(function (rr) {
+          const q = rr.quality || rr._qual || null;
+          const parts = [];
+          if (q) parts.push(q);
+          if (rr.size) parts.push(formatBytes(rr.size));
+          return '<a class="qrow done" target="_blank" rel="noopener noreferrer" href="' + esc(directHref(rr.direct)) + '" title="Direct link">' +
+                   '<span class="qlabel">' + esc(parts.length ? parts.join(" · ") : "Direct") + '</span>' +
+                   '<span class="qbtn">Download</span>' +
+                 '</a>';
+        }).join("")
+      : '<a class="qrow bad" target="_blank" rel="noopener noreferrer" href="' + esc(post.link) + '" title="Direct resolve failed — opens the source redirect page.">' +
+          '<span class="qlabel">' + esc(badgeLine || "File") + '</span>' +
+          '<span class="qbtn">Via redirect</span>' +
+        '</a>';
+
+    dv.innerHTML =
+      '<a class="back-btn" href="#/">← Back to results</a>' +
+      '<div class="detail-body">' +
+        '<div class="detail-hero">' +
+          '<div class="detail-poster">' +
+            (meta && meta.poster
+              ? '<img src="' + esc(meta.poster) + '" alt="' + esc(item.parsed.name) + '" onerror="this.style.display=\'none\'">'
+              : '<div class="noimg">Poster unavailable</div>') +
+          '</div>' +
+          '<div class="detail-info">' +
+            '<div class="detail-title">' + esc(item.parsed.name + (item.parsed.year ? " (" + item.parsed.year + ")" : "")) + '</div>' +
+            '<div class="meta">' + esc(post.title) + '</div>' +
+            (badgeLine ? '<div class="card-tags" style="display:flex">' + badgeLine.split(" · ").map(function (q) { return "<span>" + esc(q) + "</span>"; }).join("") + '</div>' : "") +
+            (meta ? '<div class="detail-chips">' +
+                      ([meta.year ? meta.year : "", meta.genres.join(", "), meta.rating ? "★ " + meta.rating : "", meta.network || ""]
+                        .filter(Boolean).map(function (c) { return '<span>' + esc(c) + '</span>'; }).join("")) +
+                    '</div>' : "") +
+            (meta && meta.summary ? '<div class="detail-synopsis">' + esc(meta.summary) + '</div>' : "") +
+          '</div>' +
+        '</div>' +
+        '<div class="detail-links">' +
+          '<div class="season-header" style="margin-top:0">Download</div>' +
+          '<div class="actions">' + rowsHtml + '</div>' +
+          '<a class="open secondary" style="margin-top:10px" href="' + esc(post.link) + '" target="_blank" rel="noopener noreferrer" title="Open the source page">Source</a>' +
+        '</div>' +
+      '</div>';
+
+    // Tags from the best resolved filename (codec, audio, subs…).
+    if (resolved.best && resolved.best.filename) {
+      const tags = parseFilenameTags(resolved.best.filename);
+      if (tags.length) {
+        const tagBox = dv.querySelector(".detail-info");
+        const chip = document.createElement("div");
+        chip.className = "card-tags";
+        chip.style.display = "flex";
+        chip.style.marginTop = "6px";
+        chip.innerHTML = tags.map(function (t) { return "<span>" + esc(t) + "</span>"; }).join("");
+        tagBox.appendChild(chip);
+      }
+    }
+    window.scrollTo(0, 0);
   }
 
   function renderView1(groups, query) {
