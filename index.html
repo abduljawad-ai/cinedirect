@@ -871,6 +871,24 @@
     return { raw, name, year, qualities: [...new Set(quals)] };
   }
 
+  // Audio/language edition tag from a release title. Returns the canonical
+  // edition tag ("" = default English) and a subs flag.
+  function parseEdition(title) {
+    const t = String(title || "").toLowerCase();
+    let ed = "";
+    let subs = "";
+    const multi = /\b(dual\s*audio|dual\b|multi\s*audio|multi\b|dd\+?\s*5\.1|dts\s*5\.1)\b/.exec(t);
+    const langBr = /\b(hindi|tamil|telugu|malayalam|kannada|punjabi|bengali|english|spanish|french|german|japanese|korean)\b/.exec(t);
+    if (multi) {
+      ed = "dual audio";
+    } else if (langBr && /^(hindi|tamil|telugu|malayalam|kannada|punjabi|bengali)$/.test(langBr[1])) {
+      ed = langBr[1];
+    }
+    const subsM = /\b(eng[\s.\-]*subs?|english[\s.\-]*subs?|subtitles)\b/.exec(t);
+    if (subsM) subs = "eng sub";
+    return { edition: ed, subs: subs };
+  }
+
   // Season/episode markers from a release title.
   //   "Silo.S03E10.1080p" -> { season:3, episode:10, isSeasonPack:false }
   //   "Silo.S03.1080p"    -> { season:3, episode:null, isSeasonPack:true }

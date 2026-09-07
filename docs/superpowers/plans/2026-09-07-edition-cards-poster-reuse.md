@@ -77,7 +77,7 @@ Insert immediately after the closing `}` of `parseTitle` (line ~872):
     } else if (langBr && /^(hindi|tamil|telugu|malayalam|kannada|punjabi|bengali)$/.test(langBr[1])) {
       ed = langBr[1];
     }
-    const subsM = /\b(eng\s*subs?|english\s*subs?|subtitles)\b/.exec(t);
+    const subsM = /\b(eng[\s.\-]*subs?|english[\s.\-]*subs?|subtitles)\b/.exec(t);
     if (subsM) subs = "eng sub";
     return { edition: ed, subs: subs };
   }
@@ -99,7 +99,8 @@ const src = fs.readFileSync('index.html', 'utf8').match(/<script>([\s\S]*?)<\/sc
 function grab(name) {
   const i = src.indexOf('function ' + name + '(');
   if (i < 0) throw new Error('function not found: ' + name);
-  let depth = 0, j = i;
+  const lbrace = src.indexOf('{', i);
+  let depth = 0, j = lbrace;
   do { if (src[j] === '{') depth++; if (src[j] === '}') depth--; j++; } while (depth > 0);
   const fnSrc = src.slice(i, j).replace(/^function\s+[A-Za-z0-9_$]+\s*/, 'function ');
   return new Function('return (' + fnSrc + ')')();
@@ -198,7 +199,8 @@ const src = fs.readFileSync('index.html', 'utf8').match(/<script>([\s\S]*?)<\/sc
 function grab(name) {
   const i = src.indexOf('function ' + name + '(');
   if (i < 0) throw new Error('function not found: ' + name);
-  let depth = 0, j = i;
+  const lbrace = src.indexOf('{', i);
+  let depth = 0, j = lbrace;
   do { if (src[j] === '{') depth++; if (src[j] === '}') depth--; j++; } while (depth > 0);
   const fnSrc = src.slice(i, j).replace(/^function\s+[A-Za-z0-9_$]+\s*/, 'function ');
   return new Function('return (' + fnSrc + ')')();
