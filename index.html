@@ -758,6 +758,31 @@
     return url || null;
   }
 
+  // TVMaze metadata for the detail view (keyless, CORS *). Uses the same
+  // cleaned title as fetchPoster's TVMaze lane so shows match consistently.
+  const metaCache = new Map();
+  async function fetchTvMazeMeta(name) {
+    const key = normKey(name);
+    if (metaCache.has(key)) return metaCache.get(key);
+    let out = null;
+    try {
+      const r = await fetch("https://api.tvmaze.com/singlesearch/shows?q=" + encodeURIComponent(name));
+      if (r.ok) {
+        const d = await r.json();
+        out = {
+          poster: (d.image && (d.image.original || d.image.medium)) || null,
+          summary: d.summary ? stripHtml(d.summary) : "",
+          genres: d.genres || [],
+          year: d.premiered ? String(d.premiered).slice(0, 4) : "",
+          rating: (d.rating && d.rating.average) || null,
+          network: (d.network && d.network.name) || null
+        };
+      }
+    } catch (e) { out = null; }
+    metaCache.set(key, out);
+    return out;
+  }
+
   // ---------------- Grouping ----------------
   function groupByMovie(posts) {
     const groups = [];
