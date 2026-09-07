@@ -103,6 +103,17 @@
     border: 1px solid rgba(244,67,54,.3); color: #ffab91; border-radius: 12px;
     padding: 20px; font-size: 14px; line-height: 1.6; text-align: left;
   }
+
+  #view-search { display: block; }
+  #view-detail { min-height: 60vh; }
+  .back-btn {
+    display: inline-flex; align-items: center; gap: 8px; margin: 6px 0 18px;
+    padding: 9px 16px; font-size: 13px; font-weight: 600; color: var(--text);
+    background: rgba(255,255,255,.04); border: 1px solid var(--border); border-radius: 9px;
+    text-decoration: none; transition: border-color .15s, background .15s;
+  }
+  .back-btn:hover { border-color: var(--accent); background: rgba(255,255,255,.07); }
+  .detail-body { display: flex; flex-direction: column; gap: 22px; }
 </style>
 </head>
 <body>
@@ -119,13 +130,15 @@
   <div class="hint">Type a movie title and press Enter, or click Search.</div>
   <div id="mode" class="hint" style="margin-top:6px;opacity:.75"></div>
 
-  <div id="status" class="status"><div class="spin"></div><div>Ready…</div></div>
-  <div id="results"></div>
-
-  <div class="footer-note">
-    Movie artwork is shown via Wikipedia and TVMaze. All download buttons point to the source release pages.
-    Only download content you are authorised to access.
+  <div id="view-search">
+    <div id="status" class="status"><div class="spin"></div><div>Ready…</div></div>
+    <div id="results"></div>
+    <div class="footer-note">
+      Movie artwork is shown via Wikipedia and TVMaze. All download buttons point to the source release pages.
+      Only download content you are authorised to access.
+    </div>
   </div>
+  <div id="view-detail" style="display:none"></div>
 </div>
 
 <script>
@@ -136,6 +149,56 @@
   const btn = document.getElementById("btn");
   const statusEl = document.getElementById("status");
   const resultsEl = document.getElementById("results");
+
+  var state = { posts: [], postById: {}, groups: [], currentKey: null, query: "", scrollTop: 0 };
+
+  function parseHash() {
+    const h = location.hash.replace(/^#/, "");
+    const m = /^\/detail\/(p\d+)$/.exec(h);
+    if (m) return { view: "detail", key: m[1] };
+    return { view: "search", key: null };
+  }
+
+  function openDetail(postId) {
+    state.currentKey = "p" + postId;
+    state.scrollTop = window.scrollY;
+    location.hash = "#/detail/p" + postId;
+  }
+
+  function goHome() {
+    location.hash = "#/";
+  }
+
+  function renderRoute() {
+    const route = parseHash();
+    const sv = document.getElementById("view-search");
+    const dv = document.getElementById("view-detail");
+    if (route.view === "detail") {
+      sv.style.display = "none";
+      dv.style.display = "block";
+      renderDetail(route.key);   // stub in this task, real in Task 6
+    } else {
+      dv.style.display = "none";
+      sv.style.display = "block";
+      if (state.query) {
+        qInput.value = state.query;
+        // Re-render cached results without refetching the API.
+        if (state.groups.length) renderView1(state.groups, state.query);
+        else doSearch();
+      }
+    }
+  }
+  window.addEventListener("hashchange", renderRoute);
+
+  function renderDetail(key) {
+    const dv = document.getElementById("view-detail");
+    dv.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">' +
+      '<a class="back-btn" href="#/">← Back to results</a><br><br>Detail view (built in a later task) for <b>' + esc(key) + '</b></div>';
+  }
+
+  function renderView1(groups, query) {
+    doSearch(); // temporary — replaced by the real view-1 render in Task 5
+  }
 
   const WP_SEARCH = "https://hblinks.co/wp-json/wp/v2/posts?per_page=100&_fields=id,title,link,date,content";
   const WIKI_SEARCH = "https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srlimit=5&srsearch=";
@@ -907,6 +970,7 @@
   })();
 
   statusEl.innerHTML = '<div class="hint" style="padding:0">Enter a movie title above. e.g. <b>Inception</b>, <b>Jeevan</b>. Each post shows every quality as a direct download.</div>';
+  renderRoute();
 })();
 </script>
 </body>
