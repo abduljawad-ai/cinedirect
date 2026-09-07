@@ -83,6 +83,7 @@
     border: 1px solid rgba(255,107,53,.22);
     padding: 3px 8px; border-radius: 999px; white-space: nowrap;
   }
+  .edition-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; color: #9fe8ff; background: rgba(56,189,248,.08); border: 1px solid rgba(56,189,248,.22); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
   .actions { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
   .open { flex: 1; text-align: center; padding: 9px 8px; font-size: 13px; font-weight: 600; border-radius: 8px; text-decoration: none; transition: background .2s, color .2s; }
   .open.primary { color: var(--accent); background: rgba(255,107,53,.08); border: 1px solid rgba(255,107,53,.25); }
@@ -360,7 +361,7 @@
         const grid = document.createElement("div");
         grid.className = "results-grid";
         var releaseItems = bucket.packItems.concat(bucket.episodeItems);
-        releaseItems.forEach(function (item) { grid.appendChild(buildCard(item, group)); });
+        buildEditionCards(releaseItems, group).forEach(function (c) { grid.appendChild(c); });
         backdrop.appendChild(grid);
       });
 
@@ -372,7 +373,7 @@
         backdrop.appendChild(h);
         const grid = document.createElement("div");
         grid.className = "results-grid";
-        laid.orphanEpisodes.forEach(function (item) { grid.appendChild(buildCard(item, group)); });
+        buildEditionCards(laid.orphanEpisodes, group).forEach(function (c) { grid.appendChild(c); });
         backdrop.appendChild(grid);
       }
 
@@ -380,7 +381,7 @@
       if (laid.movies.length) {
         const grid = document.createElement("div");
         grid.className = "results-grid";
-        laid.movies.forEach(function (item) { grid.appendChild(buildCard(item, group)); });
+        buildEditionCards(laid.movies, group).forEach(function (c) { grid.appendChild(c); });
         backdrop.appendChild(grid);
       }
 
@@ -391,25 +392,47 @@
   }
 
   function buildCard(item, group) {
-    const quals = item.parsed.qualities.length ? item.parsed.qualities.join(" · ") : "—";
+    const quals = item.parsed.qualities;
     const ep = item.seasonal.episode;
     const epBadge = ep ? '<span class="ep-badge">E' + String(ep).padStart(2, "0") + '</span>' : "";
+    const edBadge = (item.edition && item.edition.edition)
+      ? '<span class="edition-badge">' + esc(item.edition.edition.toUpperCase()) + '</span>' : "";
     const card = document.createElement("a");
     card.className = "card detail-card";
-    card.href = "#/detail/p" + item.post.id;
+    card.href = "#/detail/e" + encodeURIComponent(editionKeyOf(item));
     card.innerHTML =
       '<div class="poster">' +
         '<div class="noimg" data-note>Fetching poster…</div>' +
-        '<span class="quality-badge">' + esc(quals) + '</span>' +
         epBadge +
       '</div>' +
       '<div class="card-body">' +
         '<div class="card-title">' + esc(item.parsed.name) + '</div>' +
         '<div class="meta">' + esc(item.post.title) + '</div>' +
-        '<div class="card-tags" data-tags></div>' +
-        '<span class="details-btn">Open release →</span>' +
+        (edBadge ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">' + edBadge + '</div>' : "") +
+        (quals.length ? '<div class="card-tags" style="display:flex">' + quals.map(function (q) { return "<span>" + esc(q) + "</span>"; }).join("") + '</div>' : '<div class="card-tags" data-tags></div>') +
+        '<span class="details-btn" style="margin-top:9px">Open release →</span>' +
       '</div>';
     return card;
+  }
+
+  // Render one card per edition key. Items sharing an edition (same show/episode
+  // + same audio/language) collapse into a single card whose chips union all
+  // their qualities.
+  function buildEditionCards(items, group) {
+    const byEk = new Map();
+    items.forEach(function (item) {
+      const ek = editionKeyOf(item);
+      if (!byEk.has(ek)) byEk.set(ek, item);
+      else {
+        const existing = byEk.get(ek);
+        item.parsed.qualities.forEach(function (q) { if (!existing.parsed.qualities.includes(q)) existing.parsed.qualities.push(q); });
+        // widen the title if the other item is more descriptive
+        if (item.post.title.length > existing.post.title.length) existing.post = item.post;
+      }
+    });
+    const out = [];
+    byEk.forEach(function (item) { out.push(buildCard(item, group)); });
+    return out;
   }
 
   function runPosterWorkers(groups) {
