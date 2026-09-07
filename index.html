@@ -559,6 +559,60 @@
     return { raw, name, year, qualities: [...new Set(quals)] };
   }
 
+  // Season/episode markers from a release title.
+  //   "Silo.S03E10.1080p" -> { season:3, episode:10, isSeasonPack:false }
+  //   "Silo.S03.1080p"    -> { season:3, episode:null, isSeasonPack:true }
+  //   "Sil.S03E01-E05"    -> { season:3, episode:null, isSeasonPack:true }
+  function parseSeasonal(title) {
+    const t = String(title || "").toUpperCase();
+    // Multi-episode range = a season pack ("S03E01-E05", "S3.E1-E8").
+    const range = /\bS(\d{1,2})[.\s]*E\d{1,3}\s*[-–—]\s*E?\d{1,3}\b/.exec(t);
+    if (range) return { season: parseInt(range[1], 10), episode: null, isSeasonPack: true };
+    // Combined season+episode ("S03E10", "S3.E1", "S1 E2").
+    const se = /\bS(\d{1,2})[.\s]*E(\d{1,3})\b/.exec(t);
+    if (se) return { season: parseInt(se[1], 10), episode: parseInt(se[2], 10), isSeasonPack: false };
+    // Solo season ("S03", "S3.COMPLETE") = a whole-season pack.
+    const s = /(^|\W)S(\d{1,2})(?=\D|$)/.exec(t);
+    if (s) return { season: parseInt(s[2], 10), episode: null, isSeasonPack: true };
+    // Solo episode with no season in the title ("E10") — an orphan.
+    const e = /(^|\W)E(\d{1,3})(?=\D|$)/.exec(t);
+    return { season: null, episode: e ? parseInt(e[2], 10) : null, isSeasonPack: false };
+  }
+
+  function qualRankOf(item) {
+    const qs = item.parsed.qualities;
+    const rankMap = { "2160P": 4, "4K": 4, "1080P": 3, "720P": 2, "480P": 1, "360P": 0 };
+    let best = -1;
+    qs.forEach(function (q) { const r = rankMap[q] != null ? rankMap[q] : -1; if (r > best) best = r; });
+    return best;
+  }
+
+  // Organize one show group into seasons + standalone cards.
+  function layOutGroup(group) {
+    const seasonMap = new Map();
+    const orphanEpisodes = [];
+    const movies = [];
+    group.items.forEach(function (item) {
+      const se = item.seasonal;
+      if (se.season !== null) {
+        if (!seasonMap.has(se.season)) seasonMap.set(se.season, { season: se.season, episodeItems: [], packItems: [] });
+        const bucket = seasonMap.get(se.season);
+        if (se.isSeasonPack) bucket.packItems.push(item);
+        else bucket.episodeItems.push(item);
+      } else if (se.episode !== null) {
+        orphanEpisodes.push(item);
+      } else {
+        movies.push(item);
+      }
+    });
+    const seasonList = Array.from(seasonMap.values()).sort(function (a, b) { return a.season - b.season; });
+    seasonList.forEach(function (b) {
+      b.episodeItems.sort(function (a, c) { return (a.seasonal.episode || 0) - (c.seasonal.episode || 0); });
+      b.packItems.sort(function (a, c) { return qualRankOf(c) - qualRankOf(a); });
+    });
+    return { name: group.name, year: group.year, seasonList: seasonList, orphanEpisodes: orphanEpisodes, movies: movies };
+  }
+
   function normKey(name) {
     return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\b(the|a|an)\b/g, "").trim();
   }
