@@ -3,10 +3,16 @@
 Search a movie and get **direct download links** for every available quality —
 no timers, no captchas, no ads.
 
+Two views, one page:
+- **Search** results group releases into shows → seasons → episodes (with a
+  card for each complete-season pack). No links resolve here, so results load fast.
+- Open any release to its **detail** view (`#/detail/p<postId>`) for the TVMaze
+  poster/synopsis plus one direct download row per quality (2160P/1080P/720P/480P).
+
 The page reads the post index from `hblinks.co` (WordPress), resolves each
 `hubcdn.sbs/file`, `hubdrive.tips/file`, and `hubcloud.cx|ist/drive` link down
-to the bare direct file URL (R2 / GDrive / Pixeldrain), and shows every quality
-as a one-click download.
+to the bare direct file URL (R2 / GDrive / Pixeldrain) **only when a detail
+card is opened**.
 
 ---
 
@@ -71,8 +77,8 @@ probes the worker, resolves every link to its direct file URL, and proxies
 Pixeldrain downloads through `…/api/dl?src=…` exactly like local.
 
 > **No worker?** The site still works in static mode but shows `Via redirect`
-> rows for hubdrive/hubcloud and `/u/` links for Pixeldrain — it just can't
-> hand out true direct blob URLs without a server.
+> rows for hubdrive/hubcloud and `/u/` links for Pixeldrain on the detail view —
+> it just can't hand out true direct blob URLs without a server.
 
 ### Testing an undeployed relay
 
