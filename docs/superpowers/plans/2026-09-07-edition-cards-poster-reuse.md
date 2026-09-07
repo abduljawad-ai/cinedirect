@@ -697,3 +697,81 @@ same-edition items render once.
 **Resolved:** The duplicate-card risk (same edition producing multiple cards) is
 handled by `buildEditionCards` in Task 3 Step 2-3 — same-episode quality variants
 collapse into a single card whose chips union their qualities.
+
+---
+
+## Deviations & Post-Plan Changes (final state)
+
+These were applied to `index.html` during/after the plan's Task 4–7 and are
+folded into the single final commit (see git log message).
+
+### 1. Task 4 `parseHash` note (plan gap filled, not a behavior change)
+The plan's Task 4 mentioned `parseHash` but never pinned the actual regex. The
+implemented regex is `/^\/detail\/e(.+)$/` — it captures the encoded edition key
+**without** the leading `e` (the caller prepends `e` only when constructing the
+hash, and `renderDetail` decodes via `decodeURIComponent`). No bug was found; the
+note just documents the concrete shape so a future reader doesn't "fix" it.
+
+### 2. `doSearch(queryParam)` accepts an explicit query string
+Hard-refresh verification (Task 6/7) needs to re-run the exact search that
+produced a deep link. `doSearch(queryParam)` now uses `String(queryParam).trim()`
+when a string is passed, falling back to the search box value otherwise. This
+lets `doSearch("Zootopia 2016")` run deterministically regardless of the input
+state, and powers the `renderDetail(route.key)` path on reload.
+
+### 3. `runPosterWorkers` post-bundle re-paint for reloaded details
+After a hard refresh straight to a `#/detail/...` hash, the detail hero poster
+must still come from the same poster cache/reuse path as cards. `runPosterWorkers`
+now also re-paints posters on every render and matches cards via
+`normKey(baseTitle(...)) === home`, so a directly-loaded detail resolves its
+episode-card artwork through the identical reuse logic (no duplicate fetch, no
+stale-key miss).
+
+### 4. New feature: show every direct-link type as its own detail row (Chg-2026-09-08)
+The original plan collapsed resolved mirrors into ONE row per unique quality
+(`qualityRows`). The user then requested the opposite: surface each distinct
+direct-link family for a release as its own row, tagged by host, instead of
+collapsing mirrors by quality.
+
+Changes in `index.html`:
+- `extractLinks` (RegEx `lre`) now also captures raw direct URL families from the
+  post HTML alongside the hubcdn/hubdrive/hubcloud wrappers: `pub-*.r2.dev/<hash>`,
+  `*.r2.cloudflarestorage.com/...` (S3 presigned), `video-downloads.googleusercontent.com/...`
+  (GDrive), `drive.google.com/...`, `pixeldrain.(com|dev)/(u|api/file)/<id>`, and
+  `gofile.io/d/<id>`. Each captured link is tagged with its host `kind`
+  (`hubcdn|hubdrive|hubcloud|r2|s3|gdrive|pixeldrain|gofile`) and mapped to its
+  nearest preceding quality label (unchanged behavior).
+- New client-side `resolveRaw(url)` runs in **every** mode: r2.dev / S3 presigned /
+  googleusercontent / drive.google → returned as-is (these are already the direct
+  link); `pixeldrain /u/<id>` and `/api/file/<id>` → normalized to
+  `https://pixeldrain.dev/api/file/<id>` plus `pixInfo` extras (size/name/quality);
+  `gofile.io/d/<id>` → `null` (still requires an account token, unresolvable).
+- `resolveOne`/`resolveOneStatic` route raw links to `resolveRaw` before any writer
+  wrapper logic (in static mode, raw links that match `resolveRaw` resolve client-side;
+  otherwise static falls through to hubcdn static).
+- `qualityRows` now emits **one row per unique resolved URL** (deduped by URL only,
+  no quality collapse), sorted best-quality first. Identical objects on different
+  hosts each get their own row.
+- New `hostTagOf(direct)` labels every row with its host family (R2 / S3 / GDrive /
+  Pixeldrain / HubCDN / HubDrive / HubCloud / Gofile) shown inside the `qlabel`
+  (e.g. `1080P · R2`, `720P · Pixeldrain`), so a release's R2 public, S3 presigned,
+  GDrive, and pixeldrain mirrors are all visible separately.
+- `renderDetail` (and card `paintRowsInto`) include the host tag in each row. The
+  single "File / Via redirect" fallback row is still used **only** when nothing
+  resolves.
+
+Verification (both modes):
+- Local (`:8137`): Zootopia (2016) 87664 shows `1080P · Pixeldrain` + `720P ·
+  Pixeldrain` (its hubdrive link is dead and gofile needs a token — correctly no
+  rows for those). Silo S03E01 shows all mirror families as tagged rows:
+  `2160P · R2`, `1080P · R2`, `1080P · Pixeldrain`, `720P · R2`, `720P · Pixeldrain`,
+  `480P · R2`, `480P · Pixeldrain`.
+- Static (`:8970`): Silo S03E01 (hubcdn-only mirrors) shows `1080P/720P/480P · R2`
+  tagged rows; Zootopia 87664 (hubdrive+hubcloud only, which static can't resolve)
+  correctly shows the single "File / Via redirect" fallback.
+
+Known limits (unchanged, documented): static cannot resolve hubdrive (AJAX POST +
+Cloudflare) nor hubcloud's 2nd hop (gamerxyt returns only an ad script via the
+reader); gofile requires an account token. Those rows simply don't appear in the
+mode where they can't be resolved — they fall back to "Via redirect" only when
+**no** mirror resolves at all.

@@ -273,6 +273,8 @@
           const q = rr.quality || rr._qual || null;
           const parts = [];
           if (q) parts.push(q);
+          const tag = hostTagOf(rr.direct);
+          if (tag) parts.push(tag);
           if (rr.size) parts.push(formatBytes(rr.size));
           return '<a class="qrow done" target="_blank" rel="noopener noreferrer" href="' + esc(directHref(rr.direct)) + '" title="Direct link">' +
                    '<span class="qlabel">' + esc(parts.length ? parts.join(" · ") : "Direct") + '</span>' +
@@ -453,13 +455,14 @@
     async function worker() {
       while (i < groups.length) {
         const group = groups[i++];
-        if (group.poster) continue;
-        group.poster = await fetchPoster(group.name, group.year);
+        if (!group.poster) group.poster = await fetchPoster(group.name, group.year);
         const imgs = Array.from(resultsEl.querySelectorAll(".detail-card"));
         const home = (group.key || "").toLowerCase();
         imgs.forEach(function (card) {
           const title = card.querySelector(".card-title");
-          if (title && normKey(title.textContent) === home) {
+          // Match on base title so episode cards ("Silo S03E10" -> "silo")
+          // get the show's poster too, without "Zootopia 2" matching "zootopia".
+          if (title && normKey(baseTitle(title.textContent)) === home) {
             const note = card.querySelector("[data-note]");
             const poster = card.querySelector(".poster");
             if (group.poster) {
@@ -701,12 +704,28 @@
     // these, so fall back to the source redirect page.
     async function resolveHubcloudStatic() { return null; }
 
-    async function resolveOneStatic(url) {
-      const pd = url.match(/pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/);
-      if (pd) {
-        const info = await pixInfo(pd[1]);
-        return { direct: "https://pixeldrain.dev/api/file/" + pd[1], size: info.size, filename: info.filename, quality: info.quality };
+    // URLs that are ALREADY the direct file link need no wrapper decode —
+    // return them as-is in every mode (R2 public buckets, S3 presigned
+    // links, GDrive direct tokens, pixeldrain /u/ pages converted to the
+    // /api/file/ URL). gofile needs an account token now, so it stays null.
+    async function resolveRaw(url) {
+      const pu = url.match(/pixeldrain\.(?:com|dev)\/u\/([A-Za-z0-9]+)/);
+      if (pu) {
+        const info = await pixInfo(pu[1]);
+        return { direct: "https://pixeldrain.dev/api/file/" + pu[1], size: info.size, filename: info.filename, quality: info.quality };
       }
+      if (/pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/.test(url)) {
+        const m = url.match(/pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/);
+        const info = await pixInfo(m[1]);
+        return { direct: "https://pixeldrain.dev/api/file/" + m[1], size: info.size, filename: info.filename, quality: info.quality };
+      }
+      if (/video-downloads\.googleusercontent\.com\//.test(url)) return { direct: url, size: null, filename: null, quality: null };
+      if (/\.r2\.cloudflarestorage\.com\//.test(url)) return { direct: url, size: null, filename: null, quality: null };
+      if (/pub-[0-9a-f]+\.r2\.dev\//.test(url)) return { direct: url, size: null, filename: null, quality: null };
+      if (/gofile\.io\/d\//.test(url)) return null;
+      return null;
+    }
+    async function resolveOneStatic(url) {
       if (/(hubcdn\.sbs)\/file\//i.test(url)) return resolveHubcdnStatic(url);
       if (/hubdrive\.tips\/file\//i.test(url)) return resolveHubdriveStatic(url);
       if (/hubcloud\.(cx|ist)\/drive\//i.test(url)) return resolveHubcloudStatic(url);
@@ -716,7 +735,17 @@
       if (resolveMemo[url]) return resolveMemo[url];
       const p = (async function () {
         await modeReady;
-        if (MODE === "static") return resolveOneStatic(url);
+        // Raw direct URLs resolve client-side in every mode (no server).
+        if (MODE === "static") {
+          const raw = await resolveRaw(url);
+          if (raw) return raw;
+          return resolveOneStatic(url);
+        }
+        if (/r2\.dev\//.test(url) || /video-downloads\.googleusercontent\.com\//.test(url) ||
+            /\.r2\.cloudflarestorage\.com\//.test(url) || /pixeldrain\.(?:com|dev)\/(?:u|api\/file)\//.test(url) ||
+            /gofile\.io\/d\//.test(url)) {
+          return resolveRaw(url);
+        }
         try {
           const r = await resolveFetch(api("/api/resolve?url=" + encodeURIComponent(url)), 45000);
           if (!r.ok) return null;
@@ -728,26 +757,21 @@
       return p;
     }
 
-    // Collapse resolved mirrors into ONE row per unique quality (mirrors are
-    // copies of the same release). Quality comes from the resolved file's own
-    // metadata when available, else from the post-HTML label in _qual.
+    // Every resolved URL becomes a row (mirrors on different hosts — R2
+    // public, S3 presigned, GDrive, pixeldrain — are all useful download
+    // links). Dedupe by the resolved URL only; sort best quality first.
     function qualityRows(results) {
-      const byQ = {};
       const seen = {};
+      const out = [];
       results.forEach(function (r) {
         if (!r || !r.direct) return;
-        const q = String(r.quality || r._qual || "").toUpperCase();
-        if (q && rankOf(q) >= 0) {
-          const key = String(q).toLowerCase();
-          const cur = byQ[key];
-          if (!cur || (r.quality && !cur.quality)) byQ[key] = r;
-        } else if (!seen[r.direct]) {
-          seen[r.direct] = true;
-          byQ["__raw_" + r.direct] = { direct: r.direct, quality: r.quality || null, size: r.size, filename: r.filename };
-        }
+        if (seen[r.direct]) return;
+        seen[r.direct] = 1;
+        out.push(r);
       });
-      return Object.keys(byQ).map(function (k) { return byQ[k]; })
-        .sort(function (a, b) { return rankOf((b.quality || b._qual || "").toUpperCase()) - rankOf((a.quality || a._qual || "").toUpperCase()); });
+      return out.sort(function (a, b) {
+        return rankOf(String(b.quality || b._qual || "").toUpperCase()) - rankOf(String(a.quality || a._qual || "").toUpperCase());
+      });
     }
 
     function bestOf(results) {
@@ -778,6 +802,21 @@
 
   // Insert download rows into a container (best quality first), or the
   // caller shows a fallback when nothing resolved.
+
+  // Host family tag shown next to each download row so mirrors on
+  // different hosts (R2, S3 presigned, GDrive, pixeldrain, hub wrappers)
+  // are visually distinct even when they carry the same quality label.
+  function hostTagOf(u) {
+    if (/hubcdn\.sbs\//.test(u || "")) return "HubCDN";
+    if (/hubdrive\.tips\//.test(u || "")) return "HubDrive";
+    if (/hubcloud\.(?:cx|ist)\//.test(u || "")) return "HubCloud";
+    if (/\.r2\.cloudflarestorage\.com\//.test(u || "")) return "S3";
+    if (/(?:video-downloads\.googleusercontent\.com|drive\.google\.com)\//.test(u || "")) return "GDrive";
+    if (/\.r2\.dev\//.test(u || "")) return "R2";
+    if (/pixeldrain\.(?:com|dev)\//.test(u || "")) return "Pixeldrain";
+    if (/gofile\.io\/d\//.test(u || "")) return "Gofile";
+    return "";
+  }
   function paintRowsInto(container, rows) {
     const source = container && container.querySelector(".open.secondary");
     if (!container) return;
@@ -867,8 +906,23 @@
     while ((qm = qlRe.exec(contentRendered || "")) !== null) {
       qreArr.push({ at: qm.index, q: qm[0].toUpperCase() });
     }
-    // Map each hub link to the nearest quality label that precedes it.
-    const lre = /href="(https:\/\/(?:hubcdn\.sbs|hubdrive\.tips)\/file\/[^"]+|https:\/\/hubcloud\.(?:cx|ist)\/drive\/[^"]+)"/g;
+    // Hosts, from most wrapped to most direct. hubcdn/hubdrive/hubcloud
+    // wrappers need decoding; bare R2 / S3 / GDrive / pixeldrain URLs are
+    // already the direct file link.
+    function kindOf(u) {
+      if (/hubcdn\.sbs\//.test(u)) return "hubcdn";
+      if (/hubdrive\.tips\//.test(u)) return "hubdrive";
+      if (/hubcloud\.(?:cx|ist)\//.test(u)) return "hubcloud";
+      if (/\.r2\.cloudflarestorage\.com\//.test(u)) return "s3";
+      if (/video-downloads\.googleusercontent\.com\//.test(u)) return "gdrive";
+      if (/drive\.google\.com\//.test(u)) return "gdrive";
+      if (/\.r2\.dev\//.test(u)) return "r2";
+      if (/pixeldrain\.(?:com|dev)\//.test(u)) return "pixeldrain";
+      if (/gofile\.io\/d\//.test(u)) return "gofile";
+      return "";
+    }
+    // Map each link to the nearest quality label that precedes it.
+    const lre = /href="(https:\/\/(?:hubcdn\.sbs|hubdrive\.tips)\/file\/[^"]+|https:\/\/hubcloud\.(?:cx|ist)\/drive\/[^"]+|https:\/\/[a-z0-9-]+\.r2\.dev\/[^"]+|https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"]+|https:\/\/video-downloads\.googleusercontent\.com\/[^"]+|https:\/\/drive\.google\.com\/[^"]+|https:\/\/pixeldrain\.(?:com|dev)\/(?:u|api\/file)\/[^"]+|https:\/\/gofile\.io\/d\/[^"]+)"/g;
     let lm;
     while ((lm = lre.exec(contentRendered || "")) !== null) {
       const l = lm[1];
@@ -879,7 +933,7 @@
         const d = lm.index - qreArr[k].at;
         if (d > 0 && d < best) { best = d; qual = qreArr[k].q; }
       }
-      hubcdn.push({ url: l, qual: qual });
+      hubcdn.push({ url: l, qual: qual, kind: kindOf(l) });
     }
     return { hubcdn: hubcdn, all: links };
   }
@@ -1134,9 +1188,11 @@
   // ---------------- Render ----------------
   let renderId = 0;
 
-  async function doSearch() {
+  async function doSearch(queryParam) {
     const id = ++renderId;
-    const query = qInput.value.trim();
+    // Accept an explicit string query (refresh-fallback path); the click/key
+    // handlers pass an Event object, so fall back to the input's value then.
+    const query = (typeof queryParam === "string") ? queryParam.trim() : qInput.value.trim();
     resultsEl.innerHTML = "";
     statusEl.style.display = "block";
     statusEl.innerHTML = '<div class="spin"></div><div>Searching “' + esc(query || "movies") + '”…</div>';
