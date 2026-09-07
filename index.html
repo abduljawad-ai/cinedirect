@@ -114,6 +114,28 @@
   }
   .back-btn:hover { border-color: var(--accent); background: rgba(255,255,255,.07); }
   .detail-body { display: flex; flex-direction: column; gap: 22px; }
+
+  .show-header {
+    margin: 26px 2px 10px; font-size: 17px; font-weight: 700; letter-spacing: -0.3px;
+    border-left: 4px solid var(--accent); padding-left: 12px;
+  }
+  .season-block { margin-bottom: 8px; }
+  .season-header {
+    margin: 18px 2px 10px; font-size: 13px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .ep-badge {
+    position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,.78);
+    color: #ffb98f; font-size: 11px; font-weight: 700; padding: 4px 9px;
+    border-radius: 6px; border: 1px solid rgba(255,107,53,.3);
+  }
+  .details-btn {
+    display: block; text-align: center; padding: 9px 8px; font-size: 13px; font-weight: 600;
+    color: var(--accent); background: rgba(255,107,53,.08);
+    border: 1px solid rgba(255,107,53,.25); border-radius: 8px; margin-top: 4px;
+  }
+  a.detail-card { text-decoration: none; color: inherit; }
+  a.detail-card:hover .details-btn { background: var(--accent); color: #fff; }
 </style>
 </head>
 <body>
@@ -197,7 +219,122 @@
   }
 
   function renderView1(groups, query) {
-    doSearch(); // temporary — replaced by the real view-1 render in Task 5
+    resultsEl.innerHTML = "";
+    statusEl.style.display = "none";
+    const stats = document.createElement("div");
+    stats.className = "stats";
+    const totalPosts = groups.reduce(function (n, g) { return n + g.items.length; }, 0);
+    stats.innerHTML = 'Found <b>' + groups.length + '</b> title(s) — <b>' + totalPosts + '</b> release(s). ' +
+      'Open a release to see every quality as a direct download.';
+    resultsEl.appendChild(stats);
+
+    groups.forEach(function (group) {
+      const laid = layOutGroup(group);
+      const showHeading = document.createElement("div");
+      showHeading.className = "show-header";
+      showHeading.textContent = laid.name + (laid.year ? " (" + laid.year + ")" : "");
+      resultsEl.appendChild(showHeading);
+
+      const backdrop = document.createElement("div");
+      backdrop.className = "season-block";
+
+      // Season sections
+      laid.seasonList.forEach(function (bucket) {
+        const h = document.createElement("div");
+        h.className = "season-header";
+        h.textContent = "Season " + bucket.season;
+        backdrop.appendChild(h);
+
+        const grid = document.createElement("div");
+        grid.className = "results-grid";
+        var releaseItems = bucket.packItems.concat(bucket.episodeItems);
+        releaseItems.forEach(function (item) { grid.appendChild(buildCard(item, group)); });
+        backdrop.appendChild(grid);
+      });
+
+      // Orphan episodes (have an episode number but no season in the title)
+      if (laid.orphanEpisodes.length) {
+        const h = document.createElement("div");
+        h.className = "season-header";
+        h.textContent = "Episodes";
+        backdrop.appendChild(h);
+        const grid = document.createElement("div");
+        grid.className = "results-grid";
+        laid.orphanEpisodes.forEach(function (item) { grid.appendChild(buildCard(item, group)); });
+        backdrop.appendChild(grid);
+      }
+
+      // Standalone movies
+      if (laid.movies.length) {
+        const grid = document.createElement("div");
+        grid.className = "results-grid";
+        laid.movies.forEach(function (item) { grid.appendChild(buildCard(item, group)); });
+        backdrop.appendChild(grid);
+      }
+
+      resultsEl.appendChild(backdrop);
+    });
+
+    runPosterWorkers(groups);
+  }
+
+  function buildCard(item, group) {
+    const quals = item.parsed.qualities.length ? item.parsed.qualities.join(" · ") : "—";
+    const ep = item.seasonal.episode;
+    const epBadge = ep ? '<span class="ep-badge">E' + String(ep).padStart(2, "0") + '</span>' : "";
+    const card = document.createElement("a");
+    card.className = "card detail-card";
+    card.href = "#/detail/p" + item.post.id;
+    card.innerHTML =
+      '<div class="poster">' +
+        '<div class="noimg" data-note>Fetching poster…</div>' +
+        '<span class="quality-badge">' + esc(quals) + '</span>' +
+        epBadge +
+      '</div>' +
+      '<div class="card-body">' +
+        '<div class="card-title">' + esc(item.parsed.name) + '</div>' +
+        '<div class="meta">' + esc(item.post.title) + '</div>' +
+        '<div class="card-tags" data-tags></div>' +
+        '<span class="details-btn">Open release →</span>' +
+      '</div>';
+    return card;
+  }
+
+  function runPosterWorkers(groups) {
+    const cards = Array.from(resultsEl.querySelectorAll(".detail-card"));
+    const CONC = 4;
+    let i = 0;
+    async function worker() {
+      while (i < groups.length) {
+        const group = groups[i++];
+        if (group.poster) continue;
+        group.poster = await fetchPoster(group.name, group.year);
+        const imgs = Array.from(resultsEl.querySelectorAll(".detail-card"));
+        const home = (group.key || "").toLowerCase();
+        imgs.forEach(function (card) {
+          const title = card.querySelector(".card-title");
+          if (title && normKey(title.textContent) === home) {
+            const note = card.querySelector("[data-note]");
+            const poster = card.querySelector(".poster");
+            if (group.poster) {
+              const img = document.createElement("img");
+              img.loading = "lazy";
+              img.decoding = "async";
+              img.alt = group.name;
+              img.src = group.poster;
+              img.onerror = function () { if (note) note.textContent = "Poster unavailable"; };
+              if (note) note.remove();
+              poster.appendChild(img);
+            } else if (note) {
+              const init = group.name.split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0).toUpperCase(); }).join("") || "?";
+              poster.classList.add("ph");
+              note.innerHTML = '<div class="phinit">' + esc(init) + '</div>';
+            }
+          }
+        });
+      }
+    }
+    return Promise.all(Array.from({ length: Math.min(CONC, groups.length) }, worker));
   }
 
   const WP_SEARCH = "https://hblinks.co/wp-json/wp/v2/posts?per_page=100&_fields=id,title,link,date,content";
@@ -684,6 +821,8 @@
       .replace(/\bs\d{1,3}\s*e\d{1,3}\b/gi, " ")
       .replace(/\bs\d{1,3}\b/gi, " ")
       .replace(/\b(e\d{1,4}|complete|season|pack|sdr|hindi|dual|audio)\b/gi, " ")
+      .replace(/\(\s*\d{1,2}\s*\)/g, " ")
+      .replace(/\(\s*\)/g, " ")
       .replace(/\s+/g, " ").trim();
   }
 
@@ -789,13 +928,15 @@
     const index = {};
     posts.forEach((p) => {
       const parsed = parseTitle(p.title);
-      const key = normKey(parsed.name);
+      // Group episodes/packs of the same show together: strip S/E markers.
+      const base = baseTitle(parsed.name);
+      const key = normKey(base);
       if (!key) return;
       if (!index[key]) {
-        index[key] = { key, name: parsed.name, year: parsed.year, items: [], poster: null };
+        index[key] = { key, name: base, year: parsed.year, items: [], poster: null };
         groups.push(index[key]);
       }
-      index[key].items.push({ post: p, parsed });
+      index[key].items.push({ post: p, parsed, seasonal: parseSeasonal(p.title) });
     });
     return groups;
   }
@@ -854,129 +995,22 @@
       });
     }
 
+    state.postById = {};
+    posts.forEach(function (p) { state.postById["p" + p.id] = p; });
+
     const groups = groupByMovie(posts);
     groups.sort((a, b) => new Date(b.items[0].post.date) - new Date(a.items[0].post.date));
 
     const LIMIT = 120;
     const shown = groups.slice(0, LIMIT);
-    let totalCards = 0;
-    shown.forEach((g) => { totalCards += g.items.length; });
 
     if (id !== renderId) return;
-    statusEl.innerHTML = '<div class="stats">Found <b>' + groups.length + '</b> movie group(s) — <b>' +
-      totalCards + '</b> post(s). Each quality row is a direct file link — no timers, no captchas.</div>';
 
-    const grid = document.createElement("div");
-    grid.className = "results-grid";
-    resultsEl.appendChild(grid);
-
-    const cards = [];
-    shown.forEach((g) => {
-      g.items.forEach((item) => {
-        const hubs = (item.post.direct || []).map(function (h) { return { url: h.url || h, qual: h.qual || null }; });
-        const quals = item.parsed.qualities.length ? item.parsed.qualities.join(" · ") : "—";
-        const fallbackHref = (hubs[0] && hubs[0].url) || item.post.link;
-
-        let actionsHtml;
-        if (hubs.length) {
-          // Mirrors (hubcdn + hubdrive + hubcloud) are copies of the SAME
-          // release, so rendering every one = the same button repeated 3x.
-          // Render a single placeholder row; once the mirrors resolve, it is
-          // replaced by ONE row per unique quality (mirrors deduped), plus
-          // the Source button. If nothing resolves, the row says "Via redirect".
-          actionsHtml =
-            '<a class="qrow" target="_blank" rel="noopener noreferrer" href="' + esc(hubs[0].url) + '" data-row="0" title="Resolving direct link…">' +
-              '<span class="qlabel" data-qlabel>Resolving…</span>' +
-              '<span class="qbtn" data-qbtn>…</span>' +
-            '</a>' +
-            '<a class="open secondary" href="' + esc(item.post.link) + '" target="_blank" rel="noopener noreferrer" title="Open the source page">Source</a>';
-        } else {
-          actionsHtml = '<a class="open primary" href="' + esc(item.post.link) + '" target="_blank" rel="noopener noreferrer" data-primary>Open Source Page</a>';
-        }
-
-        const card = document.createElement("div");
-        card.className = "card";
-        card.innerHTML =
-          '<a class="poster-link" href="' + esc(fallbackHref) + '" target="_blank" rel="noopener noreferrer">' +
-            '<div class="poster">' +
-              '<div class="noimg" data-note>Fetching poster…</div>' +
-              '<span class="quality-badge">' + esc(quals) + '</span>' +
-              '<span class="size-badge" data-size></span>' +
-            '</div>' +
-          '</a>' +
-          '<div class="card-body">' +
-            '<div class="card-title">' + esc(item.parsed.name + (item.parsed.year ? " (" + item.parsed.year + ")" : "")) + '</div>' +
-            '<div class="meta">' + esc(item.post.title) + '</div>' +
-            '<div class="card-tags" data-tags></div>' +
-            '<div class="actions">' + actionsHtml + '</div>' +
-          '</div>';
-
-        grid.appendChild(card);
-        cards.push({ card: card, group: g, hubs: hubs, archive: item.post.link, quals: quals });
-      });
-    });
-
-    const CONC = 4;
-    let i = 0;
-    async function worker() {
-      while (i < cards.length) {
-        const idx = i++;
-        const c = cards[idx];
-        let poster;
-        if (c.group.poster) {
-          poster = c.group.poster;
-        } else {
-          poster = await fetchPoster(c.group.name, c.group.year);
-          c.group.poster = poster;
-        }
-        if (id !== renderId) return;
-        const note = c.card.querySelector("[data-note]");
-        if (poster) {
-          const img = document.createElement("img");
-          img.loading = "lazy";
-          img.decoding = "async";
-          img.alt = c.group.name;
-          img.src = poster;
-          img.onerror = function () { if (note) note.textContent = "Poster unavailable"; };
-          if (note) note.remove();
-          c.card.querySelector(".poster").appendChild(img);
-        } else if (note) {
-          const init = c.group.name.split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0).toUpperCase(); }).join("") || "?";
-          c.card.querySelector(".poster").classList.add("ph");
-          note.innerHTML = '<div class="phinit">' + esc(init) + '</div>';
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(CONC, cards.length) }, worker));
-
-    // Resolve every card's mirrors via the shared module → per-quality rows.
-    await Promise.all(cards.filter(function (c) { return c.hubs.length; })
-      .map(async function (c) {
-        const out = await Resolve.hubs(c.hubs, c.archive);
-        if (id !== renderId) return;
-        if (out.rows.length) paintRowsInto(c.card.querySelector(".actions"), out.rows);
-        else paintFallbackRow(c);
-        const best = out.best;
-        if (best) {
-          const badge = c.card.querySelector(".quality-badge");
-          if (badge && best.quality) badge.textContent = best.quality;
-          const sizeEl = c.card.querySelector("[data-size]");
-          if (sizeEl && best.size) { sizeEl.textContent = formatBytes(best.size); sizeEl.style.display = "inline-block"; }
-          const posterLink = c.card.querySelector(".poster-link");
-          if (posterLink) posterLink.href = directHref(best.direct);
-          if (!c._tagsSet && best.filename) {
-            c._tagsSet = true;
-            const tagsEl = c.card.querySelector("[data-tags]");
-            if (tagsEl) {
-              const tags = parseFilenameTags(best.filename);
-              if (tags.length) {
-                tagsEl.innerHTML = tags.map(function (t) { return "<span>" + esc(t) + "</span>"; }).join("");
-                tagsEl.style.display = "flex";
-              }
-            }
-          }
-        }
-      }));
+    renderView1(shown, query);
+    state.groups = shown;
+    state.posts = posts;
+    state.query = query;
+    Resolve.resetMemo();
   }
 
   // ---------------- Events ----------------
