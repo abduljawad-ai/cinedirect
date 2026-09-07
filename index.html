@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CineDirect — Direct Movie Downloads</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230e1621'/><path d='M16 22h8l8-10h6L30 38h-6l8-10h-26z' transform='translate(4 8)' fill='%23ff6b35'/><path d='M36 24l8 10 4-10h6L46 44' fill='none' stroke='%23ff6b35' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<meta name="description" content="Search movies and download them directly. Every quality available, no timers, no captchas, no ads.">
+<style>
+  :root {
+    --bg: #0e1621;
+    --panel: #16202e;
+    --card: #1b2838;
+    --card-hover: #223349;
+    --border: #2a3b52;
+    --text: #e6edf5;
+    --muted: #8fa3ba;
+    --accent: #ff6b35;
+    --accent-hover: #ff8556;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .container { max-width: 1280px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  header.top { text-align: center; padding: 36px 0 10px; }
+  header.top h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+  header.top h1 span { color: var(--accent); }
+  header.top p.sub { color: var(--muted); margin-top: 8px; font-size: 14px; max-width: 640px; margin-left: auto; margin-right: auto; line-height: 1.5; }
+
+  .search-wrap { display: flex; gap: 10px; margin: 28px auto 10px; max-width: 720px; }
+  .search-wrap input[type="text"] {
+    flex: 1; padding: 15px 18px; font-size: 16px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text); outline: none;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .search-wrap input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,53,.15); }
+  .search-wrap input[type="text"]::placeholder { color: #5b6d82; }
+  .search-wrap button {
+    padding: 15px 24px; font-size: 16px; font-weight: 600; border: none; border-radius: 10px;
+    background: var(--accent); color: #fff; cursor: pointer; transition: background .2s, transform .05s;
+  }
+  .search-wrap button:hover { background: var(--accent-hover); }
+  .search-wrap button:active { transform: scale(.97); }
+
+  .hint { text-align: center; color: var(--muted); font-size: 13px; max-width: 720px; margin: 0 auto 10px; }
+
+  .status { text-align: center; padding: 40px 20px; color: var(--muted); }
+  .status .spin { display: inline-block; width: 44px; height: 44px; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .stats { color: var(--muted); font-size: 13px; margin: 6px 2px 18px; line-height: 1.6; }
+  .stats b { color: var(--text); }
+
+  .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+    display: flex; flex-direction: column;
+    transition: transform .15s, border-color .2s, box-shadow .2s; text-decoration: none; color: inherit;
+  }
+  .card:hover { transform: translateY(-4px); border-color: var(--accent); box-shadow: 0 10px 24px rgba(0,0,0,.4); }
+  .poster-link { display: block; text-decoration: none; color: inherit; }
+  .poster { position: relative; aspect-ratio: 2/3; background: #1a2433; overflow: hidden; }
+  .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .poster.ph { background: linear-gradient(160deg, #1a2433 0%, #22304a 55%, #2a3b5c 100%); }
+  .poster.ph .noimg { flex-direction: column; gap: 9px; }
+  .poster.ph .phinit { width: 52px; height: 52px; border-radius: 14px; background: rgba(255,107,53,.14); border: 1px solid rgba(255,107,53,.32); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800; color: var(--accent); }
+  .poster .noimg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); text-align: center; padding: 12px; }
+  .quality-badge { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.78); color: #fff; font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 6px; letter-spacing: .5px; border: 1px solid rgba(255,255,255,.15); }
+  .size-badge { position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,.78); color: #9fe8b0; font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 6px; letter-spacing: .3px; border: 1px solid rgba(159,232,176,.25); display: none; }
+  .card-body { padding: 12px 14px 14px; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .card-title { font-size: 14px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .meta { font-size: 12px; color: var(--muted); word-break: break-word; }
+  .card-tags { display: none; flex-wrap: wrap; gap: 5px; }
+  .card-tags span {
+    font-size: 10px; font-weight: 700; letter-spacing: .03em;
+    color: #ffb98f; background: rgba(255,107,53,.09);
+    border: 1px solid rgba(255,107,53,.22);
+    padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .actions { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
+  .open { flex: 1; text-align: center; padding: 9px 8px; font-size: 13px; font-weight: 600; border-radius: 8px; text-decoration: none; transition: background .2s, color .2s; }
+  .open.primary { color: var(--accent); background: rgba(255,107,53,.08); border: 1px solid rgba(255,107,53,.25); }
+  .card:hover .open.primary { background: var(--accent); color: #fff; }
+  .open.secondary { flex: 0 0 auto; color: var(--muted); background: rgba(255,255,255,.04); border: 1px solid var(--border); }
+  .card:hover .open.secondary { color: var(--text); border-color: var(--accent); }
+  .qrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.09); border-radius: 8px; text-decoration: none; color: inherit; transition: border-color .15s, background .15s; }
+  .qrow:hover { border-color: var(--accent); background: rgba(255,255,255,.07); }
+  .qrow .qlabel { font-size: 12px; font-weight: 700; color: #e8eef7; letter-spacing: .3px; }
+  .qrow .qbtn { font-size: 11px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+  .qrow.done .qbtn { color: #9fe8b0; }
+  .qrow.bad .qbtn { color: var(--muted); }
+
+  .footer-note { text-align: center; color: #4a5b70; font-size: 12px; margin-top: 50px; line-height: 1.7; }
+
+  .error-box {
+    max-width: 560px; margin: 20px auto; background: rgba(244,67,54,.08);
+    border: 1px solid rgba(244,67,54,.3); color: #ffab91; border-radius: 12px;
+    padding: 20px; font-size: 14px; line-height: 1.6; text-align: left;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="top">
+    <h1>Cine<span>Direct</span></h1>
+    <p class="sub">Search a movie and get direct download links for every available quality — no timers, no captchas, no ads, no nonsense.</p>
+  </header>
+
+  <div class="search-wrap">
+    <input type="text" id="q" placeholder="Search a movie, e.g. Inception" autocomplete="off">
+    <button id="btn">Search</button>
+  </div>
+  <div class="hint">Type a movie title and press Enter, or click Search.</div>
+
+  <div id="status" class="status"><div class="spin"></div><div>Ready…</div></div>
+  <div id="results"></div>
+
+  <div class="footer-note">
+    Movie artwork is shown via Wikipedia and TVMaze. All download buttons point to the source release pages.
+    Only download content you are authorised to access.
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const qInput = document.getElementById("q");
+  const btn = document.getElementById("btn");
+  const statusEl = document.getElementById("status");
+  const resultsEl = document.getElementById("results");
+
+  const WP_SEARCH = "https://hblinks.co/wp-json/wp/v2/posts?per_page=100&_fields=id,title,link,date,content";
+  const WIKI_SEARCH = "https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srlimit=5&srsearch=";
+  const WIKI_SUMMARY = "https://en.wikipedia.org/api/rest_v1/page/summary/";
+  const TVMAZE = "https://api.tvmaze.com/search/shows?q=";
+
+  const posterCache = new Map();
+
+  // ---------------- Helpers ----------------
+  function stripHtml(s) {
+    const d = document.createElement("div");
+    d.innerHTML = s;
+    return (d.textContent || "").trim();
+  }
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function formatBytes(n) {
+    if (!n) return "";
+    var gb = n / 1024 / 1024 / 1024;
+    if (gb >= 1) return gb.toFixed(2) + " GB";
+    return Math.round(n / 1024 / 1024) + " MB";
+  }
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+  // pixeldrain blocks free-tier hotlinking from browsers; stream it
+  // through the local server when available. On static hosting (no
+  // server) link to the public /u/ page instead, which is never
+  // hotlink-gated. All other hosts stay fully direct.
+  let STATIC = null; // null = not probed yet
+  function directHref(u) {
+    const pd = u.match(/pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/);
+    if (pd) return STATIC ? "https://pixeldrain.com/u/" + pd[1] : "/api/dl?src=" + encodeURIComponent(u);
+    return u;
+  }
+
+  // Rich tags from the resolved file's real filename:
+  // e.g. Silo.S03E10.1080p.English.WEB-DL.5.1.ESub.x264-HDHub4u.Ms.mkv
+  // -> WEB-DL · S03E10 · English 5.1 · ESub · x264
+  function parseFilenameTags(name) {
+    const lower = (name || "").toLowerCase();
+    const out = [];
+    const fmt = lower.match(/\b(blu-?ray|web-?dl|web-?rip|hdtc|hd-?rip|cam)\b/);
+    if (fmt) {
+      out.push(
+        fmt[0] === "webdl" || fmt[0] === "web-dl" ? "WEB-DL" :
+        fmt[0] === "webrip" || fmt[0] === "web-rip" ? "WebRip" :
+        fmt[0] === "bluray" || fmt[0] === "blu-ray" ? "BluRay" :
+        fmt[0] === "hdrip" || fmt[0] === "hd-rip" ? "HDRip" :
+        fmt[0].toUpperCase()
+      );
+    }
+    const ep = (name || "").match(/\bS\d{1,2}\s?E\d{1,3}\b/i);
+    if (ep) out.push(ep[0].toUpperCase());
+    const langs = [];
+    if (/\bdual\s*audio\b/.test(lower)) langs.push("Dual Audio");
+    ["Hindi", "English", "Tamil", "Telugu", "Punjabi", "Malayalam"].forEach(function (l) {
+      if (new RegExp("\\b" + l.toLowerCase() + "\\b").test(lower)) langs.push(l);
+    });
+    const ch = lower.match(/\b(7\.1|5\.1|2\.0)\b/);
+    if (ch && langs.length) langs[langs.length - 1] += " " + ch[0];
+    else if (ch) langs.push(ch[0]);
+    out.push.apply(out, langs);
+    if (/\besub\b/.test(lower)) out.push("ESub");
+    let codec = null;
+    if (/\bx265\b/.test(lower)) codec = "x265";
+    else if (/\bhevc\b/.test(lower)) codec = "HEVC";
+    else if (/\bx264\b/.test(lower)) codec = "x264";
+    if (codec) {
+      if (/\b10\s*bit\b/.test(lower)) codec += " 10-bit";
+      out.push(codec);
+      if (/\bhdr\b/.test(lower)) out.push("HDR");
+    }
+    return out.slice(0, 6);
+  }
+
+  function extractLinks(contentRendered) {
+    const links = [];
+    const re = /href="([^"]+)"/g;
+    let m;
+    while ((m = re.exec(contentRendered || "")) !== null) links.push(m[1]);
+    const hubcdn = [];
+    const seen = {};
+    for (let i = 0; i < links.length; i++) {
+      const l = links[i];
+      // resolvable file pages: hubcdn (new host), hubdrive (old host), hubcloud drive
+      if (/(hubcdn\.sbs|hubdrive\.tips)\/file\/|hubcloud\.(cx|ist)\/drive\//i.test(l) && !seen[l]) { seen[l] = 1; hubcdn.push(l); }
+    }
+    return { hubcdn: hubcdn, all: links };
+  }
+
+  // ---------------- Title parsing ----------------
+  function parseTitle(raw) {
+    let t = raw.trim().replace(/[_\-]+/g, ".").replace(/\.+/g, ".");
+    const yearM = t.match(/\b(19|20)\d{2}\b/);
+    const year = yearM ? yearM[0] : "";
+
+    const quals = [];
+    const qre = /\b(2160p|4k|1080p|720p|480p|360p)\b/gi;
+    let m;
+    while ((m = qre.exec(t)) !== null) quals.push(m[0].toUpperCase());
+
+    let cleaned = t
+      .replace(/\b(19|20)\d{2}\b/g, " ")
+      .replace(/\b(2160p|4k|1080p|720p|480p|360p|10\s*bit|bluray|blu-ray|web-dl|webdl|webrip|hdtc|hdrip|hdcam|cam|hdr|x264|x265|hevc|aac|proper|repack|extended|muxed|multisub|dual\s*audio|hd|uhd)\b/gi, " ")
+      .replace(/\b(mkv|mp4|avi|mov|ts)\b/gi, " ")
+      .replace(/\(\s*\)/g, " ");
+
+    const name = cleaned.replace(/\.+/g, " ").replace(/\s+/g, " ").trim();
+    return { raw, name, year, qualities: [...new Set(quals)] };
+  }
+
+  function normKey(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\b(the|a|an)\b/g, "").trim();
+  }
+  function baseTitle(name) {
+    return name
+      .replace(/\bs\d{1,3}\s*e\d{1,3}\b/gi, " ")
+      .replace(/\bs\d{1,3}\b/gi, " ")
+      .replace(/\b(e\d{1,4}|complete|season|pack|sdr|hindi|dual|audio)\b/gi, " ")
+      .replace(/\s+/g, " ").trim();
+  }
+
+  // ---------------- Poster fetch (Wikipedia + TVMaze, keyless) ----------------
+  function pickArticle(hits, name) {
+    const base = normKey(name);
+    let best = hits[0];
+    let bestScore = -1;
+    for (const h of hits) {
+      const t = normKey(h.title.replace(/\([^)]*\)/g, " "));
+      let score = 0;
+      if (t === base) score += 100;
+      else if (t.includes(base)) score += 50;
+      else if (base.includes(t)) score += 40;
+      if (/^(list|category|20\d\d in film|.*disambiguation)/i.test(h.title)) score -= 60;
+      if (score > bestScore) { bestScore = score; best = h; }
+    }
+    return best;
+  }
+
+  async function posterFromWikipedia(name, year) {
+    const b = baseTitle(name);
+    const variants = [];
+    if (year) variants.push(b + " " + year + " film");
+    variants.push(b + " film", b + " TV series", b);
+    for (const term of variants) {
+      if (!term.trim()) continue;
+      try {
+        const sres = await fetch(WIKI_SEARCH + encodeURIComponent(term));
+        if (!sres.ok) continue;
+        const sdata = await sres.json();
+        const hits = sdata.query && sdata.query.search;
+        if (!hits || !hits.length) continue;
+        const article = pickArticle(hits, b).title;
+        const sum = await fetch(WIKI_SUMMARY + encodeURIComponent(article).replace(/%20/g, "_"));
+        if (!sum.ok) continue;
+        const sdata2 = await sum.json();
+        if (sdata2.thumbnail && sdata2.thumbnail.source) return sdata2.thumbnail.source;
+      } catch (e) { /* try next variant */ }
+    }
+    return null;
+  }
+
+  async function posterFromTvmaze(name) {
+    const b = baseTitle(name);
+    if (!b) return null;
+    try {
+      const r = await fetch(TVMAZE + encodeURIComponent(b));
+      if (!r.ok) return null;
+      const data = await r.json();
+      if (!data || !data.length) return null;
+      const toks = b.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+      for (const s of data.slice(0, 5)) {
+        const sh = s.show;
+        if (!sh || !sh.image) continue;
+        const n = (sh.name || "").toLowerCase();
+        if (toks.length && toks.some((t) => n.includes(t))) return sh.image.medium || sh.image.original;
+      }
+      for (const s of data) {
+        if (s.show && s.show.image) return s.show.image.medium || s.show.image.original;
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  async function fetchPoster(name, year) {
+    const key = normKey(name) + "|" + year;
+    if (posterCache.has(key)) return posterCache.get(key);
+    let url = await posterFromWikipedia(name, year);
+    if (!url) url = await posterFromTvmaze(name);
+    posterCache.set(key, url || null);
+    return url || null;
+  }
+
+  // ---------------- Grouping ----------------
+  function groupByMovie(posts) {
+    const groups = [];
+    const index = {};
+    posts.forEach((p) => {
+      const parsed = parseTitle(p.title);
+      const key = normKey(parsed.name);
+      if (!key) return;
+      if (!index[key]) {
+        index[key] = { key, name: parsed.name, year: parsed.year, items: [], poster: null };
+        groups.push(index[key]);
+      }
+      index[key].items.push({ post: p, parsed });
+    });
+    return groups;
+  }
+
+  // ---------------- Render ----------------
+  let renderId = 0;
+
+  async function doSearch() {
+    const id = ++renderId;
+    const query = qInput.value.trim();
+    resultsEl.innerHTML = "";
+    statusEl.style.display = "block";
+    statusEl.innerHTML = '<div class="spin"></div><div>Searching “' + esc(query || "movies") + '”…</div>';
+
+    let url = WP_SEARCH;
+    if (query) url += "&search=" + encodeURIComponent(query);
+
+    let posts;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const rawPosts = await res.json();
+      posts = rawPosts.map((p) => {
+        const contentRendered = (p.content && p.content.rendered) || "";
+        const links = extractLinks(contentRendered);
+        return {
+          id: p.id,
+          title: stripHtml((p.title && p.title.rendered) || ""),
+          link: p.link,
+          date: p.date,
+          direct: links.hubcdn,
+          allLinks: links.all
+        };
+      });
+    } catch (e) {
+      if (id !== renderId) return;
+      statusEl.innerHTML = "";
+      statusEl.style.display = "block";
+      const box = document.createElement("div");
+      box.className = "error-box";
+      box.innerHTML = "<b>Could not reach the movie index.</b><br><br>" +
+        "This can happen when you open the page straight from your hard drive, or if your network can't reach the source.<br><br>" +
+        "Try: <b>Run a local server</b> — open your terminal in the folder with this file and run:<br><br>" +
+        "<code>python3 -m http.server 8000</code><br>then open <code>http://localhost:8000</code>.<br><br>" +
+        "Technical error: <b>" + esc(String(e && e.message || e)) + "</b>";
+      statusEl.appendChild(box);
+      return;
+    }
+
+    if (query) {
+      const ql = query.toLowerCase();
+      const qt = ql.split(/\s+/).filter(Boolean);
+      posts = posts.filter((p) => {
+        const t = p.title.toLowerCase();
+        return qt.every((tok) => t.includes(tok));
+      });
+    }
+
+    const groups = groupByMovie(posts);
+    groups.sort((a, b) => new Date(b.items[0].post.date) - new Date(a.items[0].post.date));
+
+    const LIMIT = 120;
+    const shown = groups.slice(0, LIMIT);
+    let totalCards = 0;
+    shown.forEach((g) => { totalCards += g.items.length; });
+
+    if (id !== renderId) return;
+    statusEl.innerHTML = '<div class="stats">Found <b>' + groups.length + '</b> movie group(s) — <b>' +
+      totalCards + '</b> post(s). Each quality row is a direct file link — no timers, no captchas.</div>';
+
+    const grid = document.createElement("div");
+    grid.className = "results-grid";
+    resultsEl.appendChild(grid);
+
+    const cards = [];
+    shown.forEach((g) => {
+      g.items.forEach((item) => {
+        const hubs = (item.post.direct || []).map(function (u) { return { url: u }; });
+        const quals = item.parsed.qualities.length ? item.parsed.qualities.join(" · ") : "—";
+        const fallbackHref = (hubs[0] && hubs[0].url) || item.post.link;
+
+        let actionsHtml;
+        if (hubs.length) {
+          actionsHtml =
+            hubs.map(function (h, i) {
+              return '<a class="qrow" target="_blank" rel="noopener noreferrer" href="' + esc(h.url) + '" data-row="' + i + '" title="Resolving direct link…">' +
+                       '<span class="qlabel" data-qlabel>Resolving…</span>' +
+                       '<span class="qbtn" data-qbtn>…</span>' +
+                     '</a>';
+            }).join("") +
+            '<a class="open secondary" href="' + esc(item.post.link) + '" target="_blank" rel="noopener noreferrer" title="Open the source page">Source</a>';
+        } else {
+          actionsHtml = '<a class="open primary" href="' + esc(item.post.link) + '" target="_blank" rel="noopener noreferrer" data-primary>Open Source Page</a>';
+        }
+
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML =
+          '<a class="poster-link" href="' + esc(fallbackHref) + '" target="_blank" rel="noopener noreferrer">' +
+            '<div class="poster">' +
+              '<div class="noimg" data-note>Fetching poster…</div>' +
+              '<span class="quality-badge">' + esc(quals) + '</span>' +
+              '<span class="size-badge" data-size></span>' +
+            '</div>' +
+          '</a>' +
+          '<div class="card-body">' +
+            '<div class="card-title">' + esc(item.parsed.name + (item.parsed.year ? " (" + item.parsed.year + ")" : "")) + '</div>' +
+            '<div class="meta">' + esc(item.post.title) + '</div>' +
+            '<div class="card-tags" data-tags></div>' +
+            '<div class="actions">' + actionsHtml + '</div>' +
+          '</div>';
+
+        grid.appendChild(card);
+        cards.push({ card: card, group: g, hubs: hubs, archive: item.post.link, quals: quals });
+      });
+    });
+
+    const CONC = 4;
+    let i = 0;
+    async function worker() {
+      while (i < cards.length) {
+        const idx = i++;
+        const c = cards[idx];
+        let poster;
+        if (c.group.poster) {
+          poster = c.group.poster;
+        } else {
+          poster = await fetchPoster(c.group.name, c.group.year);
+          c.group.poster = poster;
+        }
+        if (id !== renderId) return;
+        const note = c.card.querySelector("[data-note]");
+        if (poster) {
+          const img = document.createElement("img");
+          img.loading = "lazy";
+          img.decoding = "async";
+          img.alt = c.group.name;
+          img.src = poster;
+          img.onerror = function () { if (note) note.textContent = "Poster unavailable"; };
+          if (note) note.remove();
+          c.card.querySelector(".poster").appendChild(img);
+        } else if (note) {
+          const init = c.group.name.split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0).toUpperCase(); }).join("") || "?";
+          c.card.querySelector(".poster").classList.add("ph");
+          note.innerHTML = '<div class="phinit">' + esc(init) + '</div>';
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONC, cards.length) }, worker));
+
+    function resolveFetch(url, ms) {
+      const ctl = new AbortController();
+      const t = setTimeout(function () { ctl.abort(); }, ms);
+      return fetch(url, { signal: ctl.signal }).finally(function () { clearTimeout(t); });
+    }
+
+    const QUAL_RANK = { "2160P": 4, "4K": 4, "1080P": 3, "720P": 2, "480P": 1, "360P": 0 };
+    function rankOf(q) { return QUAL_RANK[q] != null ? QUAL_RANK[q] : -1; }
+
+    const resolveMemo = {};
+    // One shared probe: the first resolve triggers a single /api/ping;
+    // everyone else awaits the same result. Sets STATIC = true when the
+    // page is served without the local server (GitHub Pages etc.).
+    let staticProbe = null;
+    function probeStatic() {
+      if (!staticProbe) {
+        staticProbe = (async function () {
+          try {
+            const r = await resolveFetch("/api/ping", 8000);
+            return !r.ok;
+          } catch (e) { return true; }
+        })();
+      }
+      return staticProbe;
+    }
+    // STATIC mode = no local server. The hubcdn file pages don't send CORS
+    // headers, so in-browser unwrapping fails and we return null -> rows
+    // fall back to "Via redirect" (open the page), which is how the
+    // original tool worked.
+    async function resolveOneStatic(url) {
+      if (/pixeldrain\.(?:com|dev)/.test(url)) {
+        return { direct: url, quality: null, size: null, filename: null };
+      }
+      return null;
+    }
+    function resolveOne(url) {
+      if (resolveMemo[url]) return resolveMemo[url];
+      const p = (async function () {
+        STATIC = await probeStatic();
+        if (STATIC) return resolveOneStatic(url);
+        try {
+          const r = await resolveFetch("/api/resolve?url=" + encodeURIComponent(url), 45000);
+          if (!r.ok) return null;
+          const data = await r.json();
+          return data && data.direct ? data : null;
+        } catch (e) { return null; }
+      })();
+      resolveMemo[url] = p;
+      return p;
+    }
+
+    function setBestBadge(c) {
+      let best = null;
+      for (let i = 0; i < c.hubs.length; i++) {
+        const row = c.card.querySelector('[data-row="' + i + '"]');
+        if (!row || !row._res) continue;
+        const q = (row._res.quality || "").toUpperCase();
+        if (!best || rankOf(q) > rankOf(best.quality || "")) {
+          best = { quality: row._res.quality, size: row._res.size, direct: row._res.direct };
+        }
+      }
+      if (!best) return;
+      const badge = c.card.querySelector(".quality-badge");
+      if (badge && best.quality) badge.textContent = best.quality;
+      const sizeEl = c.card.querySelector("[data-size]");
+      if (sizeEl && best.size) {
+        sizeEl.textContent = formatBytes(best.size);
+        sizeEl.style.display = "inline-block";
+      }
+      const posterLink = c.card.querySelector(".poster-link");
+      if (posterLink) posterLink.href = directHref(best.direct);
+    }
+
+    async function resolveCard(c) {
+      const results = await Promise.all(c.hubs.map(function (h) { return resolveOne(h.url); }));
+      if (id !== renderId) return;
+      results.forEach(function (res, i) {
+        const row = c.card.querySelector('[data-row="' + i + '"]');
+        if (!row) return;
+        const qlabel = row.querySelector("[data-qlabel]");
+        const qbtn = row.querySelector("[data-qbtn]");
+        row._res = res;
+        if (res) {
+          row.href = directHref(res.direct);
+          var parts = [];
+          if (res.quality) parts.push(res.quality);
+          if (res.size) parts.push(formatBytes(res.size));
+          qlabel.textContent = parts.length ? parts.join(" · ") : qlabel.textContent || "Direct";
+          qbtn.textContent = "Download";
+          row.title = "Direct link";
+          row.classList.add("done");
+          if (!c._tagsSet && res.filename) {
+            c._tagsSet = true;
+            const tagsEl = c.card.querySelector("[data-tags]");
+            if (tagsEl) {
+              const tags = parseFilenameTags(res.filename);
+              if (tags.length) {
+                tagsEl.innerHTML = tags.map(function (t) { return "<span>" + esc(t) + "</span>"; }).join("");
+                tagsEl.style.display = "flex";
+              }
+            }
+          }
+        } else {
+          qlabel.textContent = c.quals !== "—" ? c.quals : "File";
+          qbtn.textContent = "Via redirect";
+          row.title = "Opens through the source's redirect chain";
+          row.classList.add("bad");
+        }
+      });
+      setBestBadge(c);
+    }
+
+    const cardQueue = cards.filter(function (c) { return c.hubs.length; });
+    let qi = 0;
+    async function cardWorker() {
+      while (qi < cardQueue.length) {
+        const idx = qi++;
+        const c = cardQueue[idx];
+        await resolveCard(c);
+      }
+    }
+    if (cardQueue.length) {
+      await Promise.all(Array.from({ length: Math.min(10, cardQueue.length) }, cardWorker));
+    }
+  }
+
+  // ---------------- Events ----------------
+  btn.addEventListener("click", doSearch);
+  qInput.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
+  statusEl.innerHTML = '<div class="hint" style="padding:0">Enter a movie title above. e.g. <b>Inception</b>, <b>Jeevan</b>. Each post shows every quality as a direct download.</div>';
+})();
+</script>
+</body>
+</html>

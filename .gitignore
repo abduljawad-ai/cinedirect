@@ -1,0 +1,8 @@
+.playwright-mcp/
+__pycache__/
+*.pyc
+hubcdn_resolve_cache.json
+*.log
+final-*.png
+*jawan-placeholder-test*.png
+*silo*.png
