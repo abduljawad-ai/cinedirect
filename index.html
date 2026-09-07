@@ -186,11 +186,11 @@
   const statusEl = document.getElementById("status");
   const resultsEl = document.getElementById("results");
 
-  var state = { posts: [], postById: {}, groups: [], currentKey: null, query: "" };
+  var state = { posts: [], postById: {}, groups: [], editions: {}, currentKey: null, query: "" };
 
   function parseHash() {
     const h = location.hash.replace(/^#/, "");
-    const m = /^\/detail\/(p\d+)$/.exec(h);
+    const m = /^\/detail\/(e.+)$/.exec(h);
     if (m) return { view: "detail", key: m[1] };
     return { view: "search", key: null };
   }
@@ -389,6 +389,7 @@
     });
 
     runPosterWorkers(groups);
+    indexEditions(groups);
   }
 
   function buildCard(item, group) {
@@ -1107,6 +1108,17 @@
       g.byEditionKey[ek].items.push(item);
     });
     return groups;
+  }
+
+  // Build a flat lookup of every edition key across all groups, used by the
+  // detail view to resolve `#/detail/e<encoded-key>` routes.
+  function indexEditions(groups) {
+    state.editions = {};
+    groups.forEach(function (g) {
+      Object.keys(g.byEditionKey).forEach(function (ek) {
+        state.editions[ek] = { group: g, edition: g.byEditionKey[ek] };
+      });
+    });
   }
 
   // ---------------- Render ----------------
