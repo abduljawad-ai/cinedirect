@@ -185,23 +185,13 @@
   const statusEl = document.getElementById("status");
   const resultsEl = document.getElementById("results");
 
-  var state = { posts: [], postById: {}, groups: [], currentKey: null, query: "", scrollTop: 0 };
+  var state = { posts: [], postById: {}, groups: [], currentKey: null, query: "" };
 
   function parseHash() {
     const h = location.hash.replace(/^#/, "");
     const m = /^\/detail\/(p\d+)$/.exec(h);
     if (m) return { view: "detail", key: m[1] };
     return { view: "search", key: null };
-  }
-
-  function openDetail(postId) {
-    state.currentKey = "p" + postId;
-    state.scrollTop = window.scrollY;
-    location.hash = "#/detail/p" + postId;
-  }
-
-  function goHome() {
-    location.hash = "#/";
   }
 
   function renderRoute() {
@@ -212,7 +202,8 @@
       sv.style.display = "none";
       dv.style.display = "block";
       state.currentKey = route.key;
-      renderDetail(route.key);
+      if (state.posts.length) renderDetail(route.key);
+      else doSearch().then(function () { renderDetail(route.key); });
     } else {
       dv.style.display = "none";
       sv.style.display = "block";
@@ -228,7 +219,38 @@
 
   async function renderDetail(key) {
     const dv = document.getElementById("view-detail");
-    const post = state.postById[key];
+    let post = state.postById[key];
+    if (!post) {
+      // Hard-refresh fallback: the post might be beyond the first 100 results.
+      // Try fetching it directly by ID from the WP REST API.
+      try {
+        const idMatch = key.match(/^p(\d+)$/);
+        if (idMatch) {
+          dv.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--muted)">' +
+            '<div class="spin"></div><div>Loading release…</div></div>';
+          const r = await fetch("https://hblinks.co/wp-json/wp/v2/posts/" + idMatch[1] + "?_fields=id,title,link,date,content");
+          if (r.ok) {
+            const raw = await r.json();
+            if (raw && raw.id) {
+              const contentRendered = (raw.content && raw.content.rendered) || "";
+              const links = extractLinks(contentRendered);
+              post = {
+                id: raw.id,
+                title: stripHtml((raw.title && raw.title.rendered) || ""),
+                link: raw.link,
+                date: raw.date,
+                direct: links.hubcdn,
+                allLinks: links.all
+              };
+              state.postById[key] = post;
+              if (!state.posts.find(function (p) { return p.id === post.id; })) {
+                state.posts.push(post);
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
     if (!post) {
       dv.innerHTML = '<div class="error-box">That release is no longer available. <a href="#/" style="color:var(--accent)">← Back to results</a></div>';
       window.scrollTo(0, 0);
