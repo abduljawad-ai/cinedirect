@@ -162,14 +162,51 @@
   }
   function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-  // pixeldrain blocks free-tier hotlinking from browsers; stream it
-  // through the local server when available. On static hosting (no
-  // server) link to the public /u/ page instead, which is never
-  // hotlink-gated. All other hosts stay fully direct.
-  let STATIC = null; // null = not probed yet
+  // ---- modes ---------------------------------------------------------
+  // MODE decides where /api/* requests go:
+  //   "local"  -> the Python server on this origin (full experience)
+  //   "relay"  -> a Cloudflare Worker relay (same API, hosted) — set RELAY
+  //   "static" -> pure browser: rows open the source pages ("Via redirect")
+  // pixeldrain is handled per-mode: local/relay stream through /api/dl,
+  // static links to the public /u/ page which is never hotlink-gated.
+  var RELAY = ""; // e.g. "https://cinedirect-relay.<subdomain>.workers.dev"
+  // For testing an undepoloyed relay: append ?relay=http://localhost:8300
+  (function () {
+    var q = new URLSearchParams(location.search).get("relay");
+    if (q) RELAY = q;
+  })();
+  var MODE = null; // probe result
+  let modeProbe = null;
+  function probeHttp(url, ms) {
+    const ctl = new AbortController();
+    const t = setTimeout(function () { ctl.abort(); }, ms);
+    return fetch(url, { signal: ctl.signal }).finally(function () { clearTimeout(t); });
+  }
+  function probeMode() {
+    if (!modeProbe) {
+      modeProbe = (async function () {
+        try {
+          const r = await probeHttp("/api/ping", 6000);
+          if (r.ok) return (MODE = "local");
+        } catch (e) { /* try relay */ }
+        if (RELAY) {
+          try {
+            const r = await probeHttp(RELAY + "/api/ping", 8000);
+            if (r.ok) return (MODE = "relay");
+          } catch (e) { /* fall through */ }
+        }
+        return (MODE = "static");
+      })();
+    }
+    return modeProbe;
+  }
+  function api(path) { return MODE === "local" ? path : RELAY + path; }
   function directHref(u) {
     const pd = u.match(/pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/);
-    if (pd) return STATIC ? "https://pixeldrain.com/u/" + pd[1] : "/api/dl?src=" + encodeURIComponent(u);
+    if (pd) {
+      if (MODE === "static") return "https://pixeldrain.com/u/" + pd[1];
+      return api("/api/dl?src=" + encodeURIComponent(u));
+    }
     return u;
   }
 
@@ -504,25 +541,9 @@
     function rankOf(q) { return QUAL_RANK[q] != null ? QUAL_RANK[q] : -1; }
 
     const resolveMemo = {};
-    // One shared probe: the first resolve triggers a single /api/ping;
-    // everyone else awaits the same result. Sets STATIC = true when the
-    // page is served without the local server (GitHub Pages etc.).
-    let staticProbe = null;
-    function probeStatic() {
-      if (!staticProbe) {
-        staticProbe = (async function () {
-          try {
-            const r = await resolveFetch("/api/ping", 8000);
-            return !r.ok;
-          } catch (e) { return true; }
-        })();
-      }
-      return staticProbe;
-    }
-    // STATIC mode = no local server. The hubcdn file pages don't send CORS
-    // headers, so in-browser unwrapping fails and we return null -> rows
-    // fall back to "Via redirect" (open the page), which is how the
-    // original tool worked.
+    // Pure browser fallback (no server, no relay): hubcdn/hubcloud/
+    // hubdrive pages refuse CORS, so we return null and the rows fall
+    // back to "Via redirect" (open the page) — the original tool's UX.
     async function resolveOneStatic(url) {
       if (/pixeldrain\.(?:com|dev)/.test(url)) {
         return { direct: url, quality: null, size: null, filename: null };
@@ -532,10 +553,10 @@
     function resolveOne(url) {
       if (resolveMemo[url]) return resolveMemo[url];
       const p = (async function () {
-        STATIC = await probeStatic();
-        if (STATIC) return resolveOneStatic(url);
+        await probeMode();
+        if (MODE === "static") return resolveOneStatic(url);
         try {
-          const r = await resolveFetch("/api/resolve?url=" + encodeURIComponent(url), 45000);
+          const r = await resolveFetch(api("/api/resolve?url=" + encodeURIComponent(url)), 45000);
           if (!r.ok) return null;
           const data = await r.json();
           return data && data.direct ? data : null;
