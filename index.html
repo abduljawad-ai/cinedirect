@@ -206,8 +206,15 @@
       sv.style.display = "none";
       dv.style.display = "block";
       state.currentKey = route.key;
-      if (state.posts.length) renderDetail(route.key);
-      else doSearch().then(function () { renderDetail(route.key); });
+      if (Object.keys(state.editions).length) renderDetail(route.key);
+      else {
+        // Hard refresh: editions were lost with page state, so re-run the
+        // search scoped to the edition's title (not the default latest-100
+        // listing) so the target movie's posts are reloaded reliably.
+        const rawKey = decodeURIComponent(route.key);
+        const title = String(rawKey.split("|")[0] || "").trim();
+        doSearch(title).then(function () { renderDetail(route.key); });
+      }
     } else {
       dv.style.display = "none";
       sv.style.display = "block";
@@ -240,6 +247,9 @@
     const metaName = baseTitle(name);
     const meta = await fetchTvMazeMeta(metaName);
     if (state.currentKey !== key) return;
+
+    // Prefer the poster already loaded on the search view (browser-cached).
+    const posterUrl = group.poster || (meta && meta.poster) || null;
 
     // Merge every member post's hubs, then resolve once, dedupe by quality.
     const allHubs = [];
@@ -278,9 +288,7 @@
       '<div class="detail-body">' +
         '<div class="detail-hero">' +
           '<div class="detail-poster" data-poster>' +
-            (meta && meta.poster
-              ? '<img src="' + esc(meta.poster) + '" alt="' + esc(name) + '" loading="lazy" decoding="async" onerror="this.style.display=\'none\'">'
-              : '<div class="noimg">Poster unavailable</div>') +
+            (posterUrl ? posterFromDomOrUrl(posterUrl, name) : '<div class="noimg">Poster unavailable</div>') +
           '</div>' +
           '<div class="detail-info">' +
             '<div class="detail-title">' + esc(name + (year ? " (" + year + ")" : "")) + '</div>' +
@@ -419,6 +427,23 @@
     const out = [];
     byEk.forEach(function (item) { out.push(buildCard(item, group)); });
     return out;
+  }
+
+  // Reuse a poster already loaded on the search view: if an <img> with the same
+  // src is present in the (hidden) results DOM, the browser serves the identical
+  // URL from cache — one network fetch total across search → detail → back.
+  function posterFromDomOrUrl(url, alt) {
+    const existing = resultsEl.querySelector('.poster img[src="' + url + '"]');
+    if (existing) {
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = alt || "";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.onerror = function () { this.style.display = "none"; };
+      return img.outerHTML;
+    }
+    return '<img src="' + esc(url) + '" alt="' + esc(alt || "") + '" loading="lazy" decoding="async" onerror="this.style.display=\'none\'">';
   }
 
   function runPosterWorkers(groups) {
