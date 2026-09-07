@@ -541,12 +541,76 @@
     function rankOf(q) { return QUAL_RANK[q] != null ? QUAL_RANK[q] : -1; }
 
     const resolveMemo = {};
-    // Pure browser fallback (no server, no relay): hubcdn/hubcloud/
-    // hubdrive pages refuse CORS, so we return null and the rows fall
-    // back to "Via redirect" (open the page) — the original tool's UX.
+    // Pure-browser "static" fallback (no local server, no worker relay).
+    // The hub pages refuse CORS, but two public lanes still work:
+    //   - r.jina.ai reader returns the raw pages with CORS headers, so the
+    //     hubcdn chain (reurl -> link= bare URL) resolves in the browser.
+    //   - pixeldrain's /api/file/<id>/info sends Access-Control-Allow-Origin
+    //     so row sizes/filenames populate without any server.
+    // Anything unresolved falls back to "Via redirect" (open the page).
+    var PUB_READER = "https://r.jina.ai/";
+    function simpleQuality(name) {
+      const m = /\b(480p|720p|1080p|2160p|4k)\b/i.exec(name || "");
+      return m ? m[1].toUpperCase() : null;
+    }
+    async function pixInfo(id) {
+      let size = null, filename = "";
+      try {
+        const r = await resolveFetch("https://pixeldrain.dev/api/file/" + id + "/info", 10000);
+        if (r.ok) {
+          const info = await r.json();
+          if (info && info.name) { filename = info.name; size = info.size || null; }
+        }
+      } catch (e) { /* row still works, just without extras */ }
+      return { size: size, filename: filename, quality: simpleQuality(filename) };
+    }
     async function resolveOneStatic(url) {
-      if (/pixeldrain\.(?:com|dev)/.test(url)) {
-        return { direct: url, quality: null, size: null, filename: null };
+      const pd = url.match(/pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/);
+      if (pd) {
+        const info = await pixInfo(pd[1]);
+        return { direct: "https://pixeldrain.com/u/" + pd[1], size: info.size, filename: info.filename, quality: info.quality };
+      }
+      if (/(hubcdn\.sbs)\/file\//i.test(url)) {
+        try {
+          // The reader must get X-Return-Format: html to see the raw
+          // <script> block that carries `var reurl`.
+          const ctl = new AbortController();
+          const to = setTimeout(function () { ctl.abort(); }, 20000);
+          let html;
+          try {
+            const rr = await fetch(PUB_READER + encodeURIComponent(url), {
+              headers: { "X-Return-Format": "html" },
+              signal: ctl.signal
+            });
+            html = await rr.text();
+          } finally { clearTimeout(to); }
+          const m = /var\s+reurl\s*=\s*"([^"]+)"/s.exec(html);
+          if (m) {
+            const reurl = m[1].replace(/\\\//g, "/");
+            let wrapper = null;
+            const rb = /[?&]r=([A-Za-z0-9+/=_\-]+)/.exec(reurl);
+            if (rb) {
+              try {
+                const b64 = rb[1];
+                const pad = (4 - (b64.length % 4)) % 4;
+                wrapper = atob(b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat(pad));
+              } catch (e) { wrapper = null; }
+            } else if (reurl.indexOf("hubcdn.sbs/dl/") >= 0) {
+              wrapper = reurl;
+            }
+            if (wrapper && wrapper.indexOf("hubcdn.sbs/dl/") >= 0) {
+              const lm = /link=([^&]+)/.exec(wrapper);
+              let dl = lm ? lm[1] : wrapper;
+              try { dl = decodeURIComponent(dl); } catch (e) { /* keep as-is */ }
+              const px = dl.match(/pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/);
+              if (px) {
+                const info = await pixInfo(px[1]);
+                return { direct: dl, size: info.size, filename: info.filename, quality: info.quality };
+              }
+              return { direct: dl, size: null, filename: null, quality: null };
+            }
+          }
+        } catch (e) { /* fall back to Via redirect */ }
       }
       return null;
     }
@@ -602,7 +666,7 @@
           var parts = [];
           if (res.quality) parts.push(res.quality);
           if (res.size) parts.push(formatBytes(res.size));
-          qlabel.textContent = parts.length ? parts.join(" · ") : qlabel.textContent || "Direct";
+          qlabel.textContent = parts.length ? parts.join(" · ") : "Direct";
           qbtn.textContent = "Download";
           row.title = "Direct link";
           row.classList.add("done");
