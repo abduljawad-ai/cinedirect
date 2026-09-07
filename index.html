@@ -909,6 +909,17 @@
     return { season: null, episode: e ? parseInt(e[2], 10) : null, isSeasonPack: false };
   }
 
+  // Canonical key for one edition: base title | year | edition | season/episode.
+  function editionKeyOf(item) {
+    const se = item.seasonal;
+    const parts = [normKey(baseTitle(item.parsed.name)), item.parsed.year || "",
+      item.edition.edition, item.edition.subs,
+      se.season != null ? "S" + se.season : "",
+      se.episode != null ? "E" + se.episode : "",
+      se.isSeasonPack ? "PACK" : ""];
+    return parts.filter(Boolean).join("|");
+  }
+
   function qualRankOf(item) {
     const qs = item.parsed.qualities;
     const rankMap = { "2160P": 4, "4K": 4, "1080P": 3, "720P": 2, "480P": 1, "360P": 0 };
@@ -1058,15 +1069,19 @@
     const index = {};
     posts.forEach((p) => {
       const parsed = parseTitle(p.title);
-      // Group episodes/packs of the same show together: strip S/E markers.
       const base = baseTitle(parsed.name);
       const key = normKey(base);
       if (!key) return;
       if (!index[key]) {
-        index[key] = { key, name: base, year: parsed.year, items: [], poster: null };
+        index[key] = { key, name: base, year: parsed.year, items: [], poster: null, editions: new Map(), byEditionKey: {} };
         groups.push(index[key]);
       }
-      index[key].items.push({ post: p, parsed, seasonal: parseSeasonal(p.title) });
+      const g = index[key];
+      const item = { post: p, parsed, seasonal: parseSeasonal(p.title), edition: parseEdition(p.title) };
+      g.items.push(item);
+      const ek = editionKeyOf(item);
+      if (!g.byEditionKey[ek]) { g.byEditionKey[ek] = { key: ek, items: [] }; g.editions.set(ek, g.byEditionKey[ek]); }
+      g.byEditionKey[ek].items.push(item);
     });
     return groups;
   }

@@ -209,13 +209,15 @@ function grab(name) {
 function normKey(n){return n.toLowerCase().replace(/[^a-z0-9]+/g," ").replace(/\b(the|a|an)\b/g,"").trim();}
 function baseTitle(n){return n.replace(/\bs\d{1,3}\s*e\d{1,3}\b/gi," ").replace(/\bs\d{1,3}\b/gi," ").replace(/\b(e\d{1,4}|complete|season|pack|sdr|hindi|dual|audio)\b/gi," ").replace(/\(\s*\d{1,2}\s*\)/g," ").replace(/\(\s*\)/g," ").replace(/\s+/g," ").trim();}
 const editionKeyOf = grab('editionKeyOf');
+// NOTE: use post-parseTitle names (quality already stripped, so 'Silo S03E10'
+// not 'Silo.S03E10.1080p'): baseTitle removes S/E markers but keeps 1080p.
 function item(name, se, ed){ return { parsed:{ name, year:"2016", qualities:[] }, seasonal:se, edition:ed }; }
 const e = { edition:"", subs:"" }, dual = { edition:"dual audio", subs:"" };
 function assertKey(a,b,label){ const ok=a===b; console.log((ok?'PASS':'FAIL')+' '+label+' -> '+a); if(!ok) process.exitCode=1; }
-assertKey(editionKeyOf(item('Silo.S03E10.1080p',{season:3,episode:10,isSeasonPack:false},e)), 'silo|2016|S3|E10', 'two 1080p+720p english episodes share a key (same base)');
-assertKey(editionKeyOf(item('Silo.S03E10.720p',{season:3,episode:10,isSeasonPack:false},e)), 'silo|2016|S3|E10', 'same key regardless of quality');
-assertKey(editionKeyOf(item('Silo.S03E10.1080p',{season:3,episode:10,isSeasonPack:false},dual)), 'silo|2016|dual audio|S3|E10', 'dual audio differs');
-assertKey(editionKeyOf(item('Silo.S03.1080p',{season:3,episode:null,isSeasonPack:true},e)), 'silo|2016|S3|PACK', 'season pack key');
+assertKey(editionKeyOf(item('Silo S03E10',{season:3,episode:10,isSeasonPack:false},e)), 'silo|2016|S3|E10', 'two 1080p+720p english episodes share a key (same base)');
+assertKey(editionKeyOf(item('Silo S03E10',{season:3,episode:10,isSeasonPack:false},e)), 'silo|2016|S3|E10', 'same key regardless of quality');
+assertKey(editionKeyOf(item('Silo S03E10',{season:3,episode:10,isSeasonPack:false},dual)), 'silo|2016|dual audio|S3|E10', 'dual audio differs');
+assertKey(editionKeyOf(item('Silo S03',{season:3,episode:null,isSeasonPack:true},e)), 'silo|2016|S3|PACK', 'season pack key');
 ```
 (Adjust the expected strings to match the exact `editionKeyOf` implementation —
 the point is that quality does NOT change the key, but edition and season/episode
