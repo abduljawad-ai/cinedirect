@@ -190,7 +190,10 @@
 
   function parseHash() {
     const h = location.hash.replace(/^#/, "");
-    const m = /^\/detail\/(e.+)$/.exec(h);
+    // The `e` prefix is a URL-only discriminator: buildCard emits
+    // "#/detail/e" + encodeURIComponent(editionKey). Capture the encoded key
+    // without the 'e' so renderDetail can decodeURIComponent(key) directly.
+    const m = /^\/detail\/e(.+)$/.exec(h);
     if (m) return { view: "detail", key: m[1] };
     return { view: "search", key: null };
   }
@@ -220,58 +223,41 @@
 
   async function renderDetail(key) {
     const dv = document.getElementById("view-detail");
-    let post = state.postById[key];
-    if (!post) {
-      // Hard-refresh fallback: the post might be beyond the first 100 results.
-      // Try fetching it directly by ID from the WP REST API.
-      try {
-        const idMatch = key.match(/^p(\d+)$/);
-        if (idMatch) {
-          dv.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--muted)">' +
-            '<div class="spin"></div><div>Loading release…</div></div>';
-          const r = await fetch("https://hblinks.co/wp-json/wp/v2/posts/" + idMatch[1] + "?_fields=id,title,link,date,content");
-          if (r.ok) {
-            const raw = await r.json();
-            if (raw && raw.id) {
-              const contentRendered = (raw.content && raw.content.rendered) || "";
-              const links = extractLinks(contentRendered);
-              post = {
-                id: raw.id,
-                title: stripHtml((raw.title && raw.title.rendered) || ""),
-                link: raw.link,
-                date: raw.date,
-                direct: links.hubcdn,
-                allLinks: links.all
-              };
-              state.postById[key] = post;
-              if (!state.posts.find(function (p) { return p.id === post.id; })) {
-                state.posts.push(post);
-              }
-            }
-          }
-        }
-      } catch (_) {}
-    }
-    if (!post) {
+    const ek = decodeURIComponent(key);
+    const ed = state.editions[ek];
+    if (!ed || !ed.edition.items.length) {
       dv.innerHTML = '<div class="error-box">That release is no longer available. <a href="#/" style="color:var(--accent)">← Back to results</a></div>';
       window.scrollTo(0, 0);
       return;
     }
+    const group = ed.group;
+    const items = ed.edition.items;
+    const name = group.name;
+    const year = group.year;
     dv.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--muted)">' +
       '<div class="spin"></div><div>Loading release…</div></div>';
 
-    const item = { post: post, parsed: parseTitle(post.title), seasonal: parseSeasonal(post.title) };
-    // Query TVMaze with the base title (season/episode markers stripped) so
-    // episodes resolve to their show's metadata, not a 404.
-    const meta = await fetchTvMazeMeta(baseTitle(item.parsed.name));
+    const metaName = baseTitle(name);
+    const meta = await fetchTvMazeMeta(metaName);
     if (state.currentKey !== key) return;
 
-    const hubs = (post.direct || []).map(function (h) { return { url: h.url || h, qual: h.qual || null }; });
-    const resolved = await (hubs.length ? Resolve.hubs(hubs, post.link)
+    // Merge every member post's hubs, then resolve once, dedupe by quality.
+    const allHubs = [];
+    const allLinks = [];
+    items.forEach(function (it) {
+      (it.post.direct || []).forEach(function (h) { allHubs.push({ url: h.url || h, qual: h.qual || null }); });
+      it.post.allLinks.forEach(function (l) { if (!allLinks.includes(l)) allLinks.push(l); });
+      allLinks.push(it.post.link);
+    });
+    const resolved = await (allHubs.length ? Resolve.hubs(allHubs, items[0].post.link)
       : Promise.resolve({ rows: [], best: null, results: [] }));
     if (state.currentKey !== key) return;
 
-    const badgeLine = item.parsed.qualities.length ? item.parsed.qualities.join(" · ") : null;
+    // Quality chips from all qualities seen across items.
+    const qSet = [];
+    items.forEach(function (it) { it.parsed.qualities.forEach(function (q) { if (!qSet.includes(q)) qSet.push(q); }); });
+    const chips = qSet.map(function (q) { return "<span>" + esc(q) + "</span>"; }).join("");
+
     const rowsHtml = resolved.rows.length
       ? resolved.rows.map(function (rr) {
           const q = rr.quality || rr._qual || null;
@@ -283,39 +269,38 @@
                    '<span class="qbtn">Download</span>' +
                  '</a>';
         }).join("")
-      : '<a class="qrow bad" target="_blank" rel="noopener noreferrer" href="' + esc(post.link) + '" title="Direct resolve failed — opens the source redirect page.">' +
-          '<span class="qlabel">' + esc(badgeLine || "File") + '</span>' +
-          '<span class="qbtn">Via redirect</span>' +
+      : '<a class="qrow bad" target="_blank" rel="noopener noreferrer" href="' + esc(items[0].post.link) + '" title="Direct resolve failed — opens the source redirect page.">' +
+          '<span class="qlabel">File</span><span class="qbtn">Via redirect</span>' +
         '</a>';
 
     dv.innerHTML =
       '<a class="back-btn" href="#/">← Back to results</a>' +
       '<div class="detail-body">' +
         '<div class="detail-hero">' +
-          '<div class="detail-poster">' +
+          '<div class="detail-poster" data-poster>' +
             (meta && meta.poster
-              ? '<img src="' + esc(meta.poster) + '" alt="' + esc(item.parsed.name) + '" onerror="this.style.display=\'none\'">'
+              ? '<img src="' + esc(meta.poster) + '" alt="' + esc(name) + '" loading="lazy" decoding="async" onerror="this.style.display=\'none\'">'
               : '<div class="noimg">Poster unavailable</div>') +
           '</div>' +
           '<div class="detail-info">' +
-            '<div class="detail-title">' + esc(item.parsed.name + (item.parsed.year ? " (" + item.parsed.year + ")" : "")) + '</div>' +
-            '<div class="meta">' + esc(post.title) + '</div>' +
-            (badgeLine ? '<div class="card-tags" style="display:flex">' + badgeLine.split(" · ").map(function (q) { return "<span>" + esc(q) + "</span>"; }).join("") + '</div>' : "") +
+            '<div class="detail-title">' + esc(name + (year ? " (" + year + ")" : "")) + '</div>' +
+            (items[0].edition.edition ? '<div class="edition-badge" style="align-self:flex-start">' + esc(items[0].edition.edition.toUpperCase()) + '</div>' : "") +
+            '<div class="card-tags" style="display:flex">' + chips + '</div>' +
             (meta ? '<div class="detail-chips">' +
-                      ([meta.year ? meta.year : "", meta.genres.join(", "), meta.rating ? "★ " + meta.rating : "", meta.network || ""]
-                        .filter(Boolean).map(function (c) { return '<span>' + esc(c) + '</span>'; }).join("")) +
-                    '</div>' : "") +
+              ([meta.year ? meta.year : "", meta.genres.join(", "), meta.rating ? "★ " + meta.rating : "", meta.network || ""]
+                .filter(Boolean).map(function (c) { return '<span>' + esc(c) + '</span>'; }).join("")) +
+            '</div>' : "") +
             (meta && meta.summary ? '<div class="detail-synopsis">' + esc(meta.summary) + '</div>' : "") +
           '</div>' +
         '</div>' +
         '<div class="detail-links">' +
           '<div class="season-header" style="margin-top:0">Download</div>' +
           '<div class="actions">' + rowsHtml + '</div>' +
-          '<a class="open secondary" style="margin-top:10px" href="' + esc(post.link) + '" target="_blank" rel="noopener noreferrer" title="Open the source page">Source</a>' +
+          '<a class="open secondary" style="margin-top:10px" href="' + esc(items[0].post.link) + '" target="_blank" rel="noopener noreferrer" title="Open the source page">Source</a>' +
         '</div>' +
       '</div>';
 
-    // Tags from the best resolved filename (codec, audio, subs…).
+    // Tags from the best resolved filename.
     if (resolved.best && resolved.best.filename) {
       const tags = parseFilenameTags(resolved.best.filename);
       if (tags.length) {
