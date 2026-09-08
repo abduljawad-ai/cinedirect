@@ -1,0 +1,16 @@
+{
+  "name": "@cinedirect/shared",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./types.ts",
+  "types": "./types.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  }
+}

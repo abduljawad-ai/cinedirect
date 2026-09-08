@@ -1,3 +1,12 @@
 name = "cinedirect-relay"
-main = "relay.js"
+main = "src/index.ts"
 compatibility_date = "2026-01-01"
+workers_dev = true
+
+[env.production]
+name = "cinedirect-relay"
+
+# Optional durable cache using KV (comment out until a namespace is created)
+# [[kv_namespaces]]
+# binding = "CINEDIRECT_CACHE"
+# id = "REPLACE_WITH_KV_NAMESPACE_ID"

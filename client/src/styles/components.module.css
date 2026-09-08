@@ -1,0 +1,681 @@
+/* ──────────────────────────────────────────────────────────
+   CineDirect Component Styles
+   ────────────────────────────────────────────────────────── */
+
+/* ── SearchBar ─────────────────────────────────────────── */
+.searchBar {
+  display: flex;
+  gap: 0.75rem;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 1rem 0;
+}
+
+.searchInput {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  background: #0f172a;
+  color: #f1f5f9;
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.searchInput:focus {
+  border-color: #3b82f6;
+}
+
+.searchInput::placeholder {
+  color: #64748b;
+}
+
+.searchButton {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+
+.searchButton:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.searchButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── ResultsGrid ───────────────────────────────────────── */
+.resultsContainer {
+  padding: 1rem 0;
+}
+
+.statsLine {
+  font-size: 0.875rem;
+  color: #94a3b8;
+  margin-bottom: 1.5rem;
+  padding-left: 0.25rem;
+}
+
+.groupSection {
+  margin-bottom: 2.5rem;
+}
+
+.groupHeader {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 0.25rem;
+}
+
+.groupMeta {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-bottom: 1rem;
+}
+
+.seasonBlock {
+  margin-bottom: 1.5rem;
+}
+
+.seasonHeader {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cardsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.emptyState {
+  text-align: center;
+  padding: 4rem 1rem;
+  color: #64748b;
+}
+
+.emptyIcon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.emptyText {
+  font-size: 1.1rem;
+}
+
+.emptyHint {
+  font-size: 0.875rem;
+  color: #475569;
+  margin-top: 0.5rem;
+}
+
+/* ── MovieCard ─────────────────────────────────────────── */
+.card {
+  border: 1px solid #1e293b;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #0f172a;
+  transition:
+    border-color 0.2s,
+    transform 0.2s;
+}
+
+.card:hover {
+  border-color: #334155;
+  transform: translateY(-2px);
+}
+
+.posterArea {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  background: #1e293b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.posterImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.posterPlaceholder {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.episodeBadge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+  background: rgba(0, 0, 0, 0.75);
+  color: #f1f5f9;
+  font-size: 0.7rem;
+  font-weight: 700;
+  backdrop-filter: blur(4px);
+}
+
+.editionBadge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+  background: rgba(59, 130, 246, 0.85);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(4px);
+}
+
+.cardBody {
+  padding: 0.75rem 1rem 1rem;
+}
+
+.qualityChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.qualityChip {
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.2rem;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cardTitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0 0 0.25rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.3;
+}
+
+.cardMeta {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-bottom: 0.75rem;
+}
+
+.cardLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 0.375rem;
+  background: #1e293b;
+  color: #3b82f6;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+
+.cardLink:hover {
+  background: #334155;
+  color: #60a5fa;
+}
+
+.cardArrow {
+  transition: transform 0.2s;
+}
+
+.cardLink:hover .cardArrow {
+  transform: translateX(2px);
+}
+
+/* ── DetailView ────────────────────────────────────────── */
+.detailContainer {
+  padding: 1rem 0 2rem;
+}
+
+.backButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.875rem;
+  cursor: pointer;
+  margin-bottom: 1.5rem;
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.backButton:hover {
+  border-color: #475569;
+  color: #e2e8f0;
+}
+
+.hero {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 2.5rem;
+}
+
+.heroPoster {
+  width: 200px;
+  min-width: 200px;
+  height: 300px;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #1e293b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.heroPosterImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.heroPosterPlaceholder {
+  font-size: 3rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.heroInfo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.heroTitle {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  line-height: 1.2;
+}
+
+.heroEdition {
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.375rem;
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  align-self: flex-start;
+}
+
+.heroQualities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.heroMetaChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.metaChip {
+  padding: 0.2rem 0.6rem;
+  border-radius: 0.25rem;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.heroSynopsis {
+  font-size: 0.9rem;
+  color: #94a3b8;
+  line-height: 1.6;
+  max-height: 4.8em;
+  overflow: hidden;
+}
+
+.downloadSection {
+  margin-top: 1rem;
+}
+
+.downloadSectionTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 1rem;
+}
+
+.qualityRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #1e293b;
+  border-radius: 0.5rem;
+  background: #0f172a;
+  margin-bottom: 0.5rem;
+  transition: border-color 0.2s;
+}
+
+.qualityRow:hover {
+  border-color: #334155;
+}
+
+.qualityLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  min-width: 70px;
+}
+
+.qualityMeta {
+  font-size: 0.8rem;
+  color: #64748b;
+  flex: 1;
+}
+
+.qualityLink {
+  padding: 0.4rem 1rem;
+  border-radius: 0.375rem;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.qualityLink:hover {
+  background: #2563eb;
+}
+
+.sourceLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 1.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  color: #64748b;
+  font-size: 0.85rem;
+  text-decoration: none;
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.sourceLink:hover {
+  border-color: #475569;
+  color: #94a3b8;
+}
+
+.loadingContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 1rem;
+  color: #64748b;
+  gap: 1rem;
+}
+
+.loadingSpinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid #1e293b;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+.errorState {
+  text-align: center;
+  padding: 4rem 1rem;
+}
+
+.errorText {
+  color: #ef4444;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* ── SkeletonCard ──────────────────────────────────────── */
+.skeletonCard {
+  border: 1px solid #1e293b;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.skeletonPoster {
+  width: 100%;
+  height: 180px;
+  background: linear-gradient(90deg, #1e293b 25%, #293548 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeletonBody {
+  padding: 0.75rem 1rem 1rem;
+}
+
+.skeletonLine {
+  height: 0.75rem;
+  border-radius: 0.25rem;
+  background: linear-gradient(90deg, #1e293b 25%, #293548 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  margin-bottom: 0.5rem;
+}
+
+.skeletonLineShort {
+  width: 60%;
+}
+
+.skeletonLineMedium {
+  width: 80%;
+}
+
+.skeletonChip {
+  display: inline-block;
+  width: 3rem;
+  height: 1.2rem;
+  border-radius: 0.2rem;
+  background: linear-gradient(90deg, #1e293b 25%, #293548 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  margin-right: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ── Toast ─────────────────────────────────────────────── */
+.toastContainer {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.5rem;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.875rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  animation: toastIn 0.3s ease-out;
+  max-width: 400px;
+}
+
+.toastExit {
+  animation: toastOut 0.2s ease-in forwards;
+}
+
+.toastSuccess {
+  border-left: 3px solid #22c55e;
+}
+
+.toastError {
+  border-left: 3px solid #ef4444;
+}
+
+.toastInfo {
+  border-left: 3px solid #3b82f6;
+}
+
+.toastWarning {
+  border-left: 3px solid #f59e0b;
+}
+
+.toastMessage {
+  flex: 1;
+}
+
+.toastDismiss {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.toastDismiss:hover {
+  color: #94a3b8;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes toastOut {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+/* ── Responsive ────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .hero {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .heroPoster {
+    width: 160px;
+    min-width: 160px;
+    height: 240px;
+  }
+
+  .heroInfo {
+    align-items: center;
+    text-align: center;
+  }
+
+  .heroEdition {
+    align-self: center;
+  }
+
+  .cardsGrid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+
+  .toastContainer {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+  }
+
+  .toast {
+    max-width: 100%;
+  }
+}

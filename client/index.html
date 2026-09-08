@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="CineDirect — Browse and download movies &amp; TV shows. Search titles, explore editions, and grab direct download links."
+    />
+    <meta name="theme-color" content="#0e1621" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="CineDirect" />
+    <meta
+      property="og:description"
+      content="Browse and download movies &amp; TV shows with direct links."
+    />
+    <meta property="og:site_name" content="CineDirect" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="CineDirect" />
+    <meta
+      name="twitter:description"
+      content="Browse and download movies &amp; TV shows with direct links."
+    />
+
+    <!-- CSP -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' https: data:;
+        connect-src 'self' https://hblinks.co https://api.tvmaze.com https://en.wikipedia.org https://r.jina.ai https://pixeldrain.dev;
+        font-src 'self';
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+        frame-ancestors 'none';
+      "
+    />
+
+    <!-- Preconnect hints -->
+    <link rel="preconnect" href="https://hblinks.co" crossorigin />
+    <link rel="preconnect" href="https://api.tvmaze.com" crossorigin />
+    <link rel="preconnect" href="https://en.wikipedia.org" crossorigin />
+    <link rel="preconnect" href="https://r.jina.ai" crossorigin />
+    <link rel="preconnect" href="https://pixeldrain.dev" crossorigin />
+
+    <title>CineDirect</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

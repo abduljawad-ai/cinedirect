@@ -1,0 +1,436 @@
+/**
+ * Link resolution engine for CineDirect.
+ *
+ * Resolves hub wrapper links (hubcdn / hubdrive / hubcloud) down to their
+ * bare direct file URLs and classifies raw direct URLs (R2, S3, GDrive,
+ * Pixeldrain). Resolution is memoized per URL and mode-aware:
+ *
+ * - **local / relay** — hub wrappers resolve through `/api/resolve` (the
+ *   Python server or Cloudflare relay): hubcdn's page fetch + base64 reurl
+ *   decode, hubdrive's AJAX POST, and hubcloud's multi-hop chain all need a
+ *   CORS-free server. Raw direct URLs resolve client-side in every mode.
+ * - **static** — hubcdn is resolved in-browser via the r.jina.ai reader;
+ *   hubdrive / hubcloud (server-side chains only) return null so the UI
+ *   falls back to a "Via redirect" row.
+ */
+
+import type {
+  AppMode,
+  HostKind,
+  HubLink,
+  Quality,
+  QualityRow,
+  ResolvedLink,
+  ResolveResponse,
+} from "@shared/types";
+
+import { HOST_TAGS, QUALITY_RANK } from "@shared/types";
+
+/* ------------------------------------------------------------------ */
+/*  Consts & helpers                                                   */
+/* ------------------------------------------------------------------ */
+
+/** Minimum spacing between r.jina.ai reader requests (ms). */
+const READER_SPACING = 1100;
+
+/** Maximum attempts per reader request before giving up. */
+const READER_MAX_ATTEMPTS = 3;
+
+/** Default timeout for a single reader fetch (ms). */
+const READER_TIMEOUT = 25000;
+
+/** Promise-style sleep. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Fetch wrapper that aborts after `ms` milliseconds. */
+async function resolveFetch(url: string, ms: number): Promise<Response> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, { signal: ctl.signal }).finally(() => clearTimeout(t));
+}
+
+/**
+ * Fetch a raw page through the public r.jina.ai reader.
+ *
+ * `X-Return-Format: html` is required so hubcdn's raw `<script>` block (the
+ * one carrying `var reurl`) stays visible; plain markdown mangles it.
+ */
+function readerRequest(url: string, ms: number): Promise<Response> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  return fetch("https://r.jina.ai/" + encodeURIComponent(url), {
+    headers: { "X-Return-Format": "html" },
+    signal: ctl.signal,
+  }).finally(() => clearTimeout(t));
+}
+
+/** Quality rank used for sorting; `-1` for unknown. */
+function rankOf(q: Quality | null | undefined): number {
+  if (!q) return -1;
+  return QUALITY_RANK[q] ?? -1;
+}
+
+/** Classify a URL into a host family. */
+function hostKindOf(url: string): HostKind {
+  if (/hubcdn\.sbs\//.test(url)) return "hubcdn";
+  if (/hubdrive\.tips\//.test(url)) return "hubdrive";
+  if (/hubcloud\.(?:cx|ist)\//.test(url)) return "hubcloud";
+  if (/\.r2\.cloudflarestorage\.com\//.test(url)) return "s3";
+  if (
+    /(?:video-downloads\.googleusercontent\.com|drive\.google\.com)\//.test(url)
+  ) {
+    return "gdrive";
+  }
+  if (/\.r2\.dev\//.test(url)) return "r2";
+  if (/pixeldrain\.(?:com|dev)\//.test(url)) return "pixeldrain";
+  if (/gofile\.io\/d\//.test(url)) return "gofile";
+  return "unknown";
+}
+
+/** Display tag for a host, e.g. "HubCDN" or "Pixeldrain". */
+export function hostTagOf(url: string): string {
+  return HOST_TAGS[hostKindOf(url)];
+}
+
+/** Direct download URLs are handed out as-is (no proxy wrapping). */
+export function directHref(url: string): string {
+  return url;
+}
+
+/**
+ * Extract the bare file URL from a hubcdn `dl/?link=...` wrapper URL.
+ */
+function unwrapDl(url: string): string {
+  if (!url) return url;
+  const m = /link=([^&]+)/.exec(url);
+  if (!m) return url;
+  let v = m[1];
+  try {
+    v = decodeURIComponent(v);
+  } catch {
+    /* keep as-is */
+  }
+  return v;
+}
+
+/** Extract the quality tier from a filename, if any. */
+function simpleQuality(name: string): Quality | null {
+  const m = /\b(480p|720p|1080p|2160p|4k)\b/i.exec(name || "");
+  return m ? (m[1].toUpperCase() as Quality) : null;
+}
+
+/** Outcome of resolving every hub link for one edition. */
+export interface ResolveResult {
+  rows: QualityRow[];
+  best: ResolvedLink | null;
+  results: (ResolvedLink | null)[];
+}
+
+/* ------------------------------------------------------------------ */
+/*  Resolver                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Resolves hub wrapper and raw direct URLs to direct file links.
+ *
+ * A `Resolver` is created per application mode and kept alive for the rest
+ * of the session: it memoizes per-URL results and serializes reader
+ * requests so r.jina.ai's free tier is never burst-fired.
+ */
+export class Resolver {
+  /** Relay base URL (empty in local mode) — public metadata. */
+  readonly relayUrl: string;
+
+  /** Memo cache keyed by the source URL. */
+  private memo = new Map<string, Promise<ResolvedLink | null>>();
+
+  /** Serialized chain of reader requests (r.jina.ai rate limiting). */
+  private readerQueue: Promise<unknown> = Promise.resolve();
+
+  /** Timestamp of the last reader request, used for spacing. */
+  private readerLast = 0;
+
+  private readonly mode: AppMode;
+  private readonly apiFn: (path: string) => string;
+
+  constructor(opts: {
+    mode: AppMode;
+    relayUrl: string;
+    apiFn: (path: string) => string;
+  }) {
+    this.mode = opts.mode;
+    this.relayUrl = opts.relayUrl;
+    this.apiFn = opts.apiFn;
+  }
+
+  /* --------------------------- core methods ------------------------- */
+
+  /**
+   * Resolve a single URL to its direct file link (memoized).
+   *
+   * Dispatch is by host pattern: hubcdn / hubdrive / hubcloud wrapper pages
+   * resolve via the server (reader or `null` fallbacks in static mode);
+   * every other URL is treated as a raw direct link.
+   */
+  resolveOne(url: string): Promise<ResolvedLink | null> {
+    const mem = this.memo.get(url);
+    if (mem) return mem;
+    const p = (async () => {
+      if (/hubcdn\.sbs\/file\//i.test(url)) return this.resolveHubcdn(url);
+      if (/hubdrive\.tips\/file\//i.test(url)) return this.resolveHubdrive(url);
+      if (/hubcloud\.(?:cx|ist)\/drive\//i.test(url))
+        return this.resolveHubcloud(url);
+      return this.resolveRaw(url);
+    })();
+    this.memo.set(url, p);
+    return p;
+  }
+
+  /**
+   * Resolve every hub link of an edition, deduplicate by direct URL, and
+   * sort into display rows (best quality first).
+   */
+  async resolveHubs(
+    hubs: HubLink[],
+    _archiveUrl: string,
+  ): Promise<ResolveResult> {
+    const results = await Promise.all(
+      hubs.map(async (h) => {
+        const r = await this.resolveOne(h.url);
+        if (!r) return null;
+        return r.quality ? r : { ...r, quality: h.quality ?? null };
+      }),
+    );
+    return {
+      rows: this.qualityRows(results),
+      best: this.bestOf(results),
+      results,
+    };
+  }
+
+  /** Clear the memo cache (between searches / mode changes). */
+  resetMemo(): void {
+    this.memo.clear();
+  }
+
+  /* ------------------------- public utilities ----------------------- */
+
+  /**
+   * Fetch a raw page through the r.jina.ai reader.
+   *
+   * All reader requests share one serialized queue that guarantees at least
+   * {@link READER_SPACING} ms between requests, retries HTTP 429 responses
+   * with exponential backoff (1.5s x attempt), and gives up after
+   * {@link READER_MAX_ATTEMPTS} attempts.
+   */
+  rawPageViaReader(url: string, timeout = READER_TIMEOUT): Promise<string> {
+    const job = this.readerQueue.then(async () => {
+      const wait = this.readerLast
+        ? READER_SPACING - (Date.now() - this.readerLast)
+        : 0;
+      if (wait > 0) await sleep(wait);
+      this.readerLast = Date.now();
+      for (let attempt = 0; attempt < READER_MAX_ATTEMPTS; attempt++) {
+        try {
+          const rr = await readerRequest(url, timeout);
+          if (rr.status === 429) {
+            await sleep(1500 * (attempt + 1));
+            continue;
+          }
+          if (!rr.ok) return "";
+          return await rr.text();
+        } catch {
+          if (attempt < READER_MAX_ATTEMPTS - 1) await sleep(700);
+        }
+      }
+      return "";
+    });
+    this.readerQueue = job.catch(() => {});
+    return job;
+  }
+
+  /** Pixeldrain file metadata (size, filename, quality). */
+  async pixInfo(id: string): Promise<{
+    size: number | null;
+    filename: string;
+    quality: Quality | null;
+  }> {
+    let size: number | null = null;
+    let filename = "";
+    try {
+      const r = await resolveFetch(
+        "https://pixeldrain.dev/api/file/" + id + "/info",
+        10000,
+      );
+      if (r.ok) {
+        const info = (await r.json()) as { name?: string; size?: number };
+        if (info && info.name) {
+          filename = info.name;
+          size = info.size && info.size > 0 ? info.size : null;
+        }
+      }
+    } catch {
+      /* the row still works, just without extras */
+    }
+    return { size, filename, quality: simpleQuality(filename) };
+  }
+
+  /** Display tag for a resolved link's host. */
+
+  /**
+   * Dedupe resolved links by their direct URL and sort into display rows,
+   * best quality first.
+   */
+  qualityRows(results: (ResolvedLink | null)[]): QualityRow[] {
+    const seen = new Set<string>();
+    const out: QualityRow[] = [];
+    for (const r of results) {
+      if (!r || !r.direct) continue;
+      if (seen.has(r.direct)) continue;
+      seen.add(r.direct);
+      out.push({
+        quality: r.quality,
+        direct: r.direct,
+        size: r.size,
+        hostTag: hostTagOf(r.direct),
+      });
+    }
+    return out.sort((a, b) => rankOf(b.quality) - rankOf(a.quality));
+  }
+
+  /** Highest-quality resolved link, or null. */
+  bestOf(results: (ResolvedLink | null)[]): ResolvedLink | null {
+    let best: ResolvedLink | null = null;
+    for (const r of results) {
+      if (!r || !r.direct) continue;
+      if (!best || rankOf(r.quality) > rankOf(best.quality)) best = r;
+    }
+    return best;
+  }
+
+  /* ------------------------- private resolvers ---------------------- */
+
+  private resolveHubcdn(url: string): Promise<ResolvedLink | null> {
+    if (this.mode === "static") return this.resolveHubcdnStatic(url);
+    return this.resolveViaApi(url);
+  }
+
+  private resolveHubdrive(url: string): Promise<ResolvedLink | null> {
+    if (this.mode === "static") return Promise.resolve(null);
+    return this.resolveViaApi(url);
+  }
+
+  private resolveHubcloud(url: string): Promise<ResolvedLink | null> {
+    if (this.mode === "static") return Promise.resolve(null);
+    return this.resolveViaApi(url);
+  }
+
+  /** Ask the server / relay to resolve a hub wrapper URL. */
+  private async resolveViaApi(url: string): Promise<ResolvedLink | null> {
+    try {
+      const r = await resolveFetch(
+        this.apiFn("/api/resolve?url=" + encodeURIComponent(url)),
+        45000,
+      );
+      if (!r.ok) return null;
+      const data = (await r.json()) as ResolveResponse;
+      return data && data.direct ? data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Client-side hubcdn.sbs/file resolution via the r.jina.ai reader:
+   * page -> `var reurl` -> base64 `r=` param (or dl wrapper) -> bare URL.
+   */
+  private async resolveHubcdnStatic(url: string): Promise<ResolvedLink | null> {
+    let html = "";
+    try {
+      html = await this.rawPageViaReader(url);
+    } catch {
+      return null;
+    }
+    const m = /var\s+reurl\s*=\s*"([^"]+)"/s.exec(html);
+    if (!m) return null;
+    const reurl = m[1].replace(/\\\//g, "/");
+
+    let wrapper: string | null = null;
+    const rb = /[?&]r=([A-Za-z0-9+/=_-]+)/.exec(reurl);
+    if (rb) {
+      try {
+        const b64 = rb[1];
+        const pad = (4 - (b64.length % 4)) % 4;
+        wrapper = atob(
+          b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat(pad),
+        );
+      } catch {
+        wrapper = null;
+      }
+    } else if (reurl.includes("hubcdn.sbs/dl/")) {
+      wrapper = reurl;
+    }
+
+    if (wrapper && wrapper.includes("hubcdn.sbs/dl/")) {
+      const dl = unwrapDl(wrapper);
+      const px = dl.match(/pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/);
+      if (px) {
+        const info = await this.pixInfo(px[1]);
+        return {
+          direct: dl,
+          size: info.size,
+          filename: info.filename,
+          quality: info.quality,
+        };
+      }
+      return { direct: dl, size: null, filename: null, quality: null };
+    }
+    return null;
+  }
+
+  /**
+   * URLs that are already the direct file link need no wrapper decode —
+   * return them as-is (Pixeldrain `/u/` pages become `/api/file/` first;
+   * GDrive, S3 presigned, and R2 buckets pass straight through).
+   */
+  private async resolveRaw(url: string): Promise<ResolvedLink | null> {
+    const pu = /pixeldrain\.(?:com|dev)\/u\/([A-Za-z0-9]+)/.exec(url);
+    if (pu) {
+      const info = await this.pixInfo(pu[1]);
+      return {
+        direct: "https://pixeldrain.dev/api/file/" + pu[1],
+        size: info.size,
+        filename: info.filename,
+        quality: info.quality,
+      };
+    }
+    const papi = /pixeldrain\.(?:com|dev)\/api\/file\/([A-Za-z0-9]+)/.exec(url);
+    if (papi) {
+      const info = await this.pixInfo(papi[1]);
+      return {
+        direct: "https://pixeldrain.dev/api/file/" + papi[1],
+        size: info.size,
+        filename: info.filename,
+        quality: info.quality,
+      };
+    }
+    if (
+      /(?:video-downloads\.googleusercontent\.com|drive\.google\.com)\//.test(
+        url,
+      )
+    ) {
+      return { direct: url, size: null, filename: null, quality: null };
+    }
+    if (
+      /(?:\.r2\.cloudflarestorage\.com|pub-[0-9a-f]+\.r2\.dev|\.r2\.dev)\//.test(
+        url,
+      )
+    ) {
+      return { direct: url, size: null, filename: null, quality: null };
+    }
+    if (/gofile\.io\/d\//.test(url)) return null;
+    return null;
+  }
+}

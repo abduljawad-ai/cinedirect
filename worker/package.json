@@ -1,6 +1,22 @@
 {
   "name": "cinedirect-relay",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "esbuild src/index.ts --bundle --outdir=dist --format=esm --platform=browser --target=es2022",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src --ext ts --max-warnings 0",
+    "format": "prettier --write \"src/**/*.ts\""
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240320.0",
+    "esbuild": "^0.19.12",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0",
+    "wrangler": "^3.30.0"
+  }
 }

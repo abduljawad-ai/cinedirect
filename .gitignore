@@ -1,9 +1,54 @@
-.playwright-mcp/
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+*.js.map
+*.d.ts.map
+
+# Environment
+.env
+.env.local
+.env.production
+*.local
+
+# Python
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Testing
+coverage/
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# Cache
 hubcdn_resolve_cache.json
 *.log
+
+# Images (test screenshots)
 final-*.png
 *jawan-placeholder-test*.png
 *silo*.png
 live-pages-verification.png
+
+# Cloudflare
+worker/.wrangler/
+worker/dist/
+.wrangler/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
