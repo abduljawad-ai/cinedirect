@@ -11,7 +11,12 @@
 
 import type { HostKind, HubLink, Post, Quality, RawPost } from "@shared/types";
 
-import { stripHtml } from "../core/parsing";
+import {
+  parseSearchHints,
+  parseSeasonal,
+  stripHtml,
+  type SearchHints,
+} from "../core/parsing";
 import { withRevalidation } from "../state/persistence";
 
 /* ------------------------------------------------------------------ */
@@ -22,6 +27,9 @@ const WP_SEARCH_URL = "https://hblinks.co/wp-json/wp/v2/posts";
 
 /** Default page size for a single posts request. */
 const DEFAULT_PER_PAGE = 100;
+
+/** How many result pages to fetch per query (covers up to 200 posts). */
+const DEFAULT_MAX_PAGES = 2;
 
 /** Default request timeout (ms). */
 const DEFAULT_TIMEOUT = 15000;
@@ -97,6 +105,44 @@ function uniqueHubs(hubs: HubLink[]): HubLink[] {
     out.push(h);
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Hint-aware search helpers                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Merge post lists, de-duplicating by id (first occurrence wins).
+ * Earlier lists keep their original order at the front of the result.
+ */
+export function mergePosts(...lists: Post[][]): Post[] {
+  const seen = new Set<number>();
+  const out: Post[] = [];
+  for (const list of lists) {
+    for (const p of list) {
+      if (p.id && seen.has(p.id)) continue;
+      if (p.id) seen.add(p.id);
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Keep only posts whose parsed season/episode match the search hints.
+ *
+ * A post matches when every non-null hint agrees with its parsed seasonal
+ * metadata: a season hint keeps that season's episodes *and* season packs;
+ * an episode hint additionally requires the exact episode number.
+ */
+export function filterByHints(posts: Post[], hints: SearchHints): Post[] {
+  if (hints.season == null && hints.episode == null) return posts;
+  return posts.filter((p) => {
+    const se = parseSeasonal(p.title);
+    if (hints.season != null && se.season !== hints.season) return false;
+    if (hints.episode != null && se.episode !== hints.episode) return false;
+    return true;
+  });
 }
 
 /**
@@ -244,37 +290,86 @@ export class WpClient {
       "api-cache",
       `wp:${q || "all"}`,
       async () => {
-        try {
-          const url = new URL(this.baseUrl);
-          url.searchParams.set("per_page", String(this.perPage));
-          url.searchParams.set("_fields", "id,title,link,date,content");
-          if (q) url.searchParams.set("search", q);
+        const out: Post[] = [];
+        const seen = new Set<number>();
 
-          const res = await fetchWithTimeout(url.toString(), this.timeout);
-          if (!res.ok) return [];
+        // Walk up to `DEFAULT_MAX_PAGES` pages so open-ended searches are
+        // not silently truncated at `perPage` results.
+        for (let page = 1; page <= DEFAULT_MAX_PAGES; page++) {
+          try {
+            const url = new URL(this.baseUrl);
+            url.searchParams.set("per_page", String(this.perPage));
+            url.searchParams.set("page", String(page));
+            url.searchParams.set("_fields", "id,title,link,date,content");
+            if (q) url.searchParams.set("search", q);
 
-          const data: unknown = await res.json();
-          if (!Array.isArray(data)) return [];
+            const res = await fetchWithTimeout(url.toString(), this.timeout);
+            if (!res.ok) break; // past the last page (or errored) → stop
 
-          return data.map((item): Post => {
-            const rp = item as Partial<RawPost>;
-            const { hubcdn: direct, all } = extractLinks(
-              rp.content?.rendered ?? "",
-            );
-            return {
-              id: rp.id ?? 0,
-              title: cleanTitle(rp.title?.rendered ?? ""),
-              link: rp.link ?? "",
-              date: rp.date ?? "",
-              direct,
-              allLinks: all,
-            };
-          });
-        } catch {
-          return [];
+            const data: unknown = await res.json();
+            if (!Array.isArray(data) || data.length === 0) break;
+
+            for (const item of data) {
+              const rp = item as Partial<RawPost>;
+              const { hubcdn: direct, all } = extractLinks(
+                rp.content?.rendered ?? "",
+              );
+              const p: Post = {
+                id: rp.id ?? 0,
+                title: cleanTitle(rp.title?.rendered ?? ""),
+                link: rp.link ?? "",
+                date: rp.date ?? "",
+                direct,
+                allLinks: all,
+              };
+              if (p.id && seen.has(p.id)) continue;
+              if (p.id) seen.add(p.id);
+              out.push(p);
+            }
+          } catch {
+            break; // network failure → return what we already have
+          }
         }
+
+        return out;
       },
       10 * 60 * 1000,
     );
+  }
+
+  /**
+   * Season/episode-aware search.
+   *
+   * WordPress search matches the *literal* query text, so queries like
+   * `reacher s04` can return nothing useful or drop episodes. When the
+   * query carries season/episode hints, this also searches the base show
+   * name, merges both result sets, and then filters client-side by the
+   * parsed hints. Queries without hints use the plain {@link search}.
+   */
+  async searchExpanded(query?: string): Promise<Post[]> {
+    const q = (query ?? "").trim();
+    if (!q) return this.search(q);
+
+    const hints = parseSearchHints(q);
+    if (hints.season == null && hints.episode == null) return this.search(q);
+
+    // Only issue the second (base-title) query when it actually differs
+    // from the original query after normalisation.
+    const norm = (s: string): string =>
+      s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const hintTitle = norm(hints.title);
+    const bare = norm(q);
+
+    const direct = await this.search(q);
+    const extra =
+      hintTitle.length > 0 && hintTitle !== bare
+        ? await this.search(hints.title)
+        : [];
+
+    const merged = mergePosts(direct, extra);
+    const filtered = filterByHints(merged, hints);
+    // Fall back to everything when the filters match nothing (keeps the
+    // search from ever coming back empty on unusual phrasing).
+    return filtered.length > 0 ? filtered : merged;
   }
 }

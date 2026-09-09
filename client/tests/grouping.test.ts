@@ -52,6 +52,31 @@ describe('groupByMovie', () => {
     const groups = groupByMovie(posts);
     expect(groups).toHaveLength(1);
   });
+
+  it('keeps dash-formatted episodes (Reacher S04-E07) as separate editions', () => {
+    // Regression: "Reacher S04-E07 … S04-E01" titles were all parsed as
+    // season packs and collapsed into a single card titled by the newest
+    // episode, so searching "reacher s04" appeared to show only episode 7.
+    const posts = [
+      post(1, 'Reacher S04-E07 1080p'),
+      post(2, 'Reacher S04-E06 1080p'),
+      post(3, 'Reacher S04-E05 1080p'),
+      post(4, 'Reacher S04-E04 1080p'),
+      post(5, 'Reacher S04-E03 1080p'),
+      post(6, 'Reacher S04-E02 1080p'),
+      post(7, 'Reacher S04-E01 1080p'),
+    ];
+    const groups = groupByMovie(posts);
+    expect(groups).toHaveLength(1);
+    // Every episode must land in its own edition.
+    const keys = Object.keys(groups[0].byEditionKey);
+    expect(keys).toHaveLength(7);
+    for (let i = 1; i <= 7; i++) {
+      expect(keys.some((k) => k.includes(`E${i}`))).toBe(true);
+    }
+    // And none of them may be season packs.
+    expect(keys.some((k) => k.includes('PACK'))).toBe(false);
+  });
 });
 
 describe('layOutGroup', () => {

@@ -33,9 +33,16 @@ shared/types.ts         Types shared by client + worker
    deep link, runs a narrowed search on the title embedded in the edition key —
    the edition index is offline after a hard refresh, so the search rebuilds it
    before the detail loader can succeed.
-2. **Search** (`doSearch`): `wp.search(q)` → `groupByMovie(posts)` →
+2. **Search** (`doSearch`): `wp.searchExpanded(q)` → `groupByMovie(posts)` →
    `indexEditions(groups)` → `resultsGroupSignal` + `editionsSignal`. Posters
    fire-and-forget via Wikipedia → TVMaze with a concurrency limit of 4.
+   `searchExpanded` fetches up to 2 result pages (200 posts) and, when the query
+   contains season/episode hints (`reacher s04`, `reacher s04e07`, …), also
+   searches the base show name and filters client-side by the parsed hints —
+   WordPress literal search alone drops or scatters episodes (`parsing.ts`:
+   `parseSearchHints` / `filterByHints`). `parseSeasonal` understands
+   dash-formatted episode codes (`S04-E07`), so each episode of a season
+   groups into its own edition card instead of collapsing into one pack.
 3. **Results render**: `ResultsGrid` lays each `ShowGroup` out via
    `layOutGroup` (season buckets, orange episodes, movies, packs). Cards link
    to `#/detail/e<encodeURIComponent(editionKey)>`.

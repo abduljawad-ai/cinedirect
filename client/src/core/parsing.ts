@@ -128,19 +128,34 @@ export function parseEdition(title: string): Edition {
 /*  parseSeasonal                                                      */
 /* ------------------------------------------------------------------ */
 
+/** Season/episode hints extracted from a free-text search query. */
+export interface SearchHints {
+  /** Query with the season/episode tokens removed (the show/movie name). */
+  title: string;
+  /** Season number the user asked for, if any. */
+  season: number | null;
+  /** Episode number the user asked for, if any. */
+  episode: number | null;
+}
+
 /**
  * Extract season/episode markers from a release title.
  *
  * Patterns recognised (in priority order):
- * 1. Multi-episode range (`S03E01-E05`) → season pack
- * 2. Combined season+episode (`S03E10`) → single episode
- * 3. Solo season (`S03`) → season pack
- * 4. Solo episode (`E10`) → orphan episode
+ * 1. Multi-episode range (`S03E01-E05`, `S04-E01-05`) → season pack
+ * 2. Combined season+episode (`S03E10`, `S03-E10`, `S03.E10`, `S3 E10`) → single episode
+ * 3. Word form (`Season 4 Episode 7`) → single episode
+ * 4. Word form season (`Season 4`) → season pack
+ * 5. Solo season (`S03`) → season pack
+ * 6. Solo episode (`E10`) → orphan episode
  *
  * @example
  * ```ts
  * parseSeasonal("Silo.S03E10.1080p")
  * // => { season: 3, episode: 10, isSeasonPack: false }
+ *
+ * parseSeasonal("Reacher.S04-E07.1080p")
+ * // => { season: 4, episode: 7, isSeasonPack: false }
  *
  * parseSeasonal("Silo.S03.1080p")
  * // => { season: 3, episode: null, isSeasonPack: true }
@@ -149,16 +164,33 @@ export function parseEdition(title: string): Edition {
 export function parseSeasonal(title: string): Seasonal {
   const t = String(title || "").toUpperCase();
 
-  // Multi-episode range = a season pack.
-  const range = /\bS(\d{1,2})[.\s]*E\d{1,3}\s*[-–—]\s*E?\d{1,3}\b/.exec(t);
+  // Multi-episode range = a season pack (S04E01-E05 / S04-E01-05).
+  const range = /\bS(\d{1,2})[.\s-–—]*E\d{1,3}\s*[-–—]\s*E?\d{1,3}(?=\D|$)/.exec(t);
   if (range) {
     return { season: parseInt(range[1], 10), episode: null, isSeasonPack: true };
   }
 
-  // Combined season+episode.
-  const se = /\bS(\d{1,2})[.\s]*E(\d{1,3})\b/.exec(t);
+  // Combined season+episode — dots, spaces, or dashes may sit between the
+  // S and E markers (so "S04-E07" parses as episode 7, not a season pack).
+  const se = /\bS(\d{1,2})[.\s-–—]*E(\d{1,3})(?=\D|$)/.exec(t);
   if (se) {
     return { season: parseInt(se[1], 10), episode: parseInt(se[2], 10), isSeasonPack: false };
+  }
+
+  // Word form: "Season 4 Episode 7".
+  const wordEp = /\bSEASON\s+(\d{1,2})\s+(?:EPISODE|EP)\s+(\d{1,3})\b/.exec(t);
+  if (wordEp) {
+    return {
+      season: parseInt(wordEp[1], 10),
+      episode: parseInt(wordEp[2], 10),
+      isSeasonPack: false,
+    };
+  }
+
+  // Word form: "Season 4" alone = a whole-season pack.
+  const wordSeason = /\bSEASON\s+(\d{1,2})\b/.exec(t);
+  if (wordSeason) {
+    return { season: parseInt(wordSeason[1], 10), episode: null, isSeasonPack: true };
   }
 
   // Solo season (whole-season pack).
@@ -174,6 +206,79 @@ export function parseSeasonal(title: string): Seasonal {
     episode: e ? parseInt(e[2], 10) : null,
     isSeasonPack: false,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  parseSearchHints                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Parse season/episode filters out of a free-text search query.
+ *
+ * Recognises compact (`s04e07`), spaced (`s04 e07`), dashed (`s04-e07`),
+ * word (`season 4 episode 7`), season-only (`s04`, `season 4`), partial
+ * (`s04e` — still a season hint), and bare-episode (`e10`) forms. Returns
+ * the cleaned show/movie name alongside any season/episode it found.
+ *
+ * @example
+ * ```ts
+ * parseSearchHints("reacher s04e07")
+ * // => { title: "reacher", season: 4, episode: 7 }
+ *
+ * parseSearchHints("reacher s04")
+ * // => { title: "reacher", season: 4, episode: null }
+ *
+ * parseSearchHints("reacher 2012")
+ * // => { title: "reacher 2012", season: null, episode: null }
+ * ```
+ */
+export function parseSearchHints(query: string): SearchHints {
+  const t = ` ${(query ?? "").trim().toLowerCase()} `;
+
+  let season: number | null = null;
+  let episode: number | null = null;
+
+  // "season 4 episode 7" / "s04e07" / "s04 e07" / "s04-e07".
+  let m =
+    /\bseason\s+(\d{1,2})\s+(?:episode|ep)\s+(\d{1,3})\b/.exec(t) ??
+    /\bs(\d{1,2})\s*[-. ]*\s*e(\d{1,3})\b/.exec(t);
+
+  if (m) {
+    season = parseInt(m[1], 10);
+    episode = parseInt(m[2], 10);
+  } else {
+    // "season 4" or "s04" alone.
+    m =
+      /\bseason\s+(\d{1,2})\b/.exec(t) ??
+      /\bs(\d{1,2})(?=\s|\W|$)/.exec(t);
+    if (m) {
+      season = parseInt(m[1], 10);
+    } else {
+      // Partial token "s04e" → season hint (user mid-typing s04e07).
+      const pq = /\bs(\d{1,2})e\b/.exec(t);
+      if (pq) season = parseInt(pq[1], 10);
+    }
+  }
+
+  // Bare "e10" → episode hint when there is no season.
+  if (episode == null && season == null) {
+    const pe = /\be(\d{1,3})\b/.exec(t);
+    if (pe) episode = parseInt(pe[1], 10);
+  }
+
+  // Strip the hint tokens to recover the show/movie name.
+  const title = t
+    .replace(/\bseason\s+\d{1,2}\s+(?:episode|ep)\s+\d{1,3}\b/gi, " ")
+    .replace(/\bs\d{1,3}\s*e\d{1,3}\b/gi, " ")
+    .replace(/\bs\d{1,3}\s*e\b/gi, " ")
+    .replace(/\bseason\s+\d{1,2}\b/gi, " ")
+    .replace(/\bs\d{1,3}\b/gi, " ")
+    .replace(/\be\d{1,3}\b/gi, " ")
+    .replace(/[-–—.,]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { title, season, episode };
 }
 
 /* ------------------------------------------------------------------ */

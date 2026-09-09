@@ -3,6 +3,7 @@ import {
   parseTitle,
   parseEdition,
   parseSeasonal,
+  parseSearchHints,
   parseFilenameTags,
   baseTitle,
   normKey,
@@ -101,6 +102,170 @@ describe('parseSeasonal', () => {
       season: null,
       episode: null,
       isSeasonPack: false,
+    });
+  });
+
+  it('parses dash-separated episodes (S04-E07), not a season pack', () => {
+    // hblinks.co posts use "Reacher S04-E07" style titles; this was the bug
+    // that collapsed every episode of a season into one pack card.
+    expect(parseSeasonal('Reacher S04-E07 1080p')).toEqual({
+      season: 4,
+      episode: 7,
+      isSeasonPack: false,
+    });
+    expect(parseSeasonal('Reacher S4-E7')).toEqual({
+      season: 4,
+      episode: 7,
+      isSeasonPack: false,
+    });
+    expect(parseSeasonal('Reacher S04-E07')).toEqual({
+      season: 4,
+      episode: 7,
+      isSeasonPack: false,
+    });
+  });
+
+  it('still parses compact, dotted, and spaced episode forms', () => {
+    expect(parseSeasonal('Silo S03E10 1080p')).toEqual({
+      season: 3,
+      episode: 10,
+      isSeasonPack: false,
+    });
+    expect(parseSeasonal('Silo S03.E10')).toEqual({
+      season: 3,
+      episode: 10,
+      isSeasonPack: false,
+    });
+    expect(parseSeasonal('Silo S03 E10')).toEqual({
+      season: 3,
+      episode: 10,
+      isSeasonPack: false,
+    });
+  });
+
+  it('parses word-form season and episode markers', () => {
+    expect(parseSeasonal('Reacher Season 4 Episode 7')).toEqual({
+      season: 4,
+      episode: 7,
+      isSeasonPack: false,
+    });
+    expect(parseSeasonal('Reacher Season 4')).toEqual({
+      season: 4,
+      episode: null,
+      isSeasonPack: true,
+    });
+  });
+
+  it('parses dash-form multi-episode ranges as season packs', () => {
+    expect(parseSeasonal('Silo S03E01-E05')).toEqual({
+      season: 3,
+      episode: null,
+      isSeasonPack: true,
+    });
+    expect(parseSeasonal('Reacher S04-E01-05')).toEqual({
+      season: 4,
+      episode: null,
+      isSeasonPack: true,
+    });
+  });
+
+  it('does not match letters inside words', () => {
+    expect(parseSeasonal('Mission S04')).toEqual({
+      season: 4,
+      episode: null,
+      isSeasonPack: true,
+    });
+    // "Se7en" style words must not be mistaken for season markers.
+    expect(parseSeasonal('Se7en 1995')).toEqual({
+      season: null,
+      episode: null,
+      isSeasonPack: false,
+    });
+  });
+});
+
+describe('parseSearchHints', () => {
+  it('extracts compact season+episode hints', () => {
+    expect(parseSearchHints('reacher s04e07')).toEqual({
+      title: 'reacher',
+      season: 4,
+      episode: 7,
+    });
+  });
+
+  it('extracts dashed and spaced season+episode hints', () => {
+    expect(parseSearchHints('reacher s04-e07')).toEqual({
+      title: 'reacher',
+      season: 4,
+      episode: 7,
+    });
+    expect(parseSearchHints('reacher s04 e07')).toEqual({
+      title: 'reacher',
+      season: 4,
+      episode: 7,
+    });
+  });
+
+  it('extracts word-form hints', () => {
+    expect(parseSearchHints('reacher season 4 episode 7')).toEqual({
+      title: 'reacher',
+      season: 4,
+      episode: 7,
+    });
+    expect(parseSearchHints('reacher season 4')).toEqual({
+      title: 'reacher',
+      season: 4,
+      episode: null,
+    });
+  });
+
+  it('extracts a season-only hint', () => {
+    expect(parseSearchHints('reacher s04')).toEqual({
+      title: 'reacher',
+      season: 4,
+      episode: null,
+    });
+    expect(parseSearchHints('reacher s4')).toEqual({
+      title: 'reacher',
+      season: 4,
+      episode: null,
+    });
+  });
+
+  it('treats a partial "s04e" token as a season hint', () => {
+    expect(parseSearchHints('reacher s04e')).toEqual({
+      title: 'reacher',
+      season: 4,
+      episode: null,
+    });
+  });
+
+  it('extracts a bare episode hint when there is no season', () => {
+    expect(parseSearchHints('silo e10')).toEqual({
+      title: 'silo',
+      season: null,
+      episode: 10,
+    });
+  });
+
+  it('returns no hints for a plain show query', () => {
+    expect(parseSearchHints('reacher')).toEqual({
+      title: 'reacher',
+      season: null,
+      episode: null,
+    });
+    expect(parseSearchHints('reacher 2012')).toEqual({
+      title: 'reacher 2012',
+      season: null,
+      episode: null,
+    });
+  });
+
+  it('handles a query that is only a hint', () => {
+    expect(parseSearchHints('s04')).toEqual({
+      title: '',
+      season: 4,
+      episode: null,
     });
   });
 });

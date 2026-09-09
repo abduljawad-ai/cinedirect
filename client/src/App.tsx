@@ -203,7 +203,7 @@ export function App() {
     try {
       const q = (query ?? querySignal.value ?? "").trim();
       querySignal.value = q;
-      const posts = await wp.search(q);
+      const posts = await wp.searchExpanded(q);
       if (posts.length === 0) {
         showToast("info", "No results found.");
         setLoading(false);
