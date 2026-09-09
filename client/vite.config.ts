@@ -3,6 +3,10 @@ import preact from '@preact/preset-vite';
 import { resolve } from 'path';
 
 export default defineConfig({
+  // Relative base keeps the static build working both at a domain root and
+  // under a subpath (e.g. GitHub Pages <user>.github.io/<repo>), which pairs
+  // with the app's hash-based routing.
+  base: './',
   plugins: [preact()],
   resolve: {
     alias: {
@@ -15,8 +19,14 @@ export default defineConfig({
     minify: 'terser',
     rollupOptions: {
       output: {
-        manualChunks: {
-          'preact-core': ['preact', '@preact/signals'],
+        manualChunks(id) {
+          if (
+            id.includes('node_modules/preact') ||
+            id.includes('node_modules/@preact/signals')
+          ) {
+            return 'preact-core';
+          }
+          return undefined;
         },
       },
     },

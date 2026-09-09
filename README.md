@@ -1,100 +1,114 @@
 # CineDirect — Direct Movie Downloads
 
-Search a movie and get **direct download links** for every available quality —
-no timers, no captchas, no ads.
+Search a movie or TV show and get **direct download links** for every available
+quality — no timers, no captchas, no ads.
 
-Two views, one page:
-- **Search** results group releases into shows → seasons → episodes (with a
-  card for each complete-season pack). No links resolve here, so results load fast.
-- Open any release to its **detail** view (`#/detail/p<postId>`) for the TVMaze
-  poster/synopsis plus one direct download row per quality (2160P/1080P/720P/480P).
+This repository is the production rewrite of the CineDirect demo. It is a
+**technical refactor only** — feature behavior and the HTML/CSS look are
+preserved (only the implementation changed).
 
-The page reads the post index from `hblinks.co` (WordPress), resolves each
-`hubcdn.sbs/file`, `hubdrive.tips/file`, and `hubcloud.cx|ist/drive` link down
-to the bare direct file URL (R2 / GDrive / Pixeldrain) **only when a detail
-card is opened**.
+## What it does
 
----
+- **Search** reads the post index from `hblinks.co` (WordPress REST API) and
+  groups releases into shows → seasons → episodes, with a card for each
+  complete-season pack. No links resolve on this view, so results load fast.
+- **Detail** (`#/detail/e<editionKey>`) renders the TVMaze poster/synopsis plus
+  one taggable download row per quality (2160P/1080P/720P/480P) and per direct
+  link type (R2 / GDrive / Pixeldrain). This is the only view that resolves
+  `hubcdn.sbs`, `hubdrive.tips`, and `hubcloud.cx|ist` links down to bare file
+  URLs.
+- **Deep links** work on hard refresh: a narrowed search runs on boot and the
+  edition index is rebuilt before the detail view renders.
 
-## How it runs — three modes
+## Repository layout
 
-| Mode            | When it's used                          | What you get |
-|-----------------|-----------------------------------------|--------------|
-| **local**       | Running `hblinks-server.py`             | Full resolution **and** a `…/api/dl?src=…` streaming proxy for Pixeldrain (bypasses hotlink checks). |
-| **relay**       | A Cloudflare Worker is deployed + `RELAY` is set | Same as local, but from Cloudflare's edge — works on GitHub Pages. |
-| **static**      | No server, no relay                     | In-browser best effort. Hubcdn resolves **directly**; hubdrive/hubcloud fall back to their redirect pages; Pixeldrain links to the public `/u/` page. |
+npm workspaces monorepo (Node ≥ 20):
 
-The mode is picked automatically on page load by probing `/api/ping` (local),
-then `RELAY/api/ping` (relay), else static.
+| Path       | What it is                                                         |
+|------------|--------------------------------------------------------------------|
+| `client/`  | Preact + Signals + CSS Modules static app (Vite)                   |
+| `worker/`  | Cloudflare Worker, TypeScript port of `worker/relay.js` (JS original kept) |
+| `server/`  | FastAPI backend (link resolution + optional Pixeldrain streaming proxy) |
+| `shared/`  | Shared TypeScript types used by client and worker                  |
+| `docs/`    | Design/analysis notes (`docs/superpowers/`)                        |
 
----
+## How it runs — mode probing
+
+| Mode    | When it's used                    | What you get |
+|---------|-----------------------------------|--------------|
+| `local` | `/api/health` answers on the same origin | Full resolution **and** a `…/api/dl?src=…` streaming proxy for Pixeldrain (bypasses hotlink checks). |
+| `relay` | `VITE_RELAY_URL` is set **and** its `/api/health` answers | Same as local, resolved at Cloudflare's edge — works on GitHub Pages. |
+| `static`| Neither is reachable              | In-browser best effort. Hubcdn resolves **directly**; hubdrive/hubcloud fall back to their redirect pages; Pixeldrain links to the public `/u/` page. |
+
+The mode is auto-detected on page load by probing `/api/health`, then
+`VITE_RELAY_URL/api/health`, else static. `?relay=<url>` in the query string
+force-overrides the mode for testing an undeployed worker.
 
 ## Running locally
 
 ```bash
-python3 hblinks-server.py 8000
-# open http://localhost:8000/
+npm install
+
+# Client dev server (port 3000, proxies /api → localhost:8000)
+npm run dev:client
+
+# FastAPI server (port 8000) — resolution + Pixeldrain proxy
+pip install -r server/requirements-dev.txt
+./.venv/bin/python server/run.py   # or: (cd server && python run.py)
+
+# Cloudflare worker in dev (optional)
+npm run dev:worker
 ```
 
-`hblinks-server.py` serves the page **and** does the link resolution + a
-Pixeldrain streaming proxy. Direct links then look like:
-
-```
-http://localhost:8000/api/dl?src=https%3A%2F%2Fpixeldrain.dev%2Fapi%2Ffile%2F...
-```
-
----
-
-## Deploying to GitHub Pages (the important part)
-
-GitHub Pages can only host static files — it **cannot** run the Python resolver.
-So for the deployed site to show real direct links (the `…/api/dl?src=…` style
-W2 proxy links) you must deploy the **Cloudflare Worker relay**, which reimplements
-the resolver at Cloudflare's edge.
-
-### 1. Deploy the worker
+Static build + preview:
 
 ```bash
-cd worker
-npx wrangler login
-npx wrangler deploy          # uses wrangler.toml (name = "cinedirect-relay")
+npm run build
+cd client && npx vite preview --port 4173
 ```
 
-This prints a URL of the form `https://cinedirect-relay.<subdomain>.workers.dev`.
+### Server environment variables
 
-### 2. Point the page at the worker
+| Variable                  | Default | Purpose                                         |
+|---------------------------|---------|-------------------------------------------------|
+| `CINEDIRECT_RELAY_URL`    | —       | Relay worker URL the server proxies to          |
+| `CINEDIRECT_TMDB_KEY`     | —       | TMDB API key for optional title metadata        |
+| `CINEDIRECT_CACHE_DIR`    | —       | Directory for the resolution cache file         |
+| `CINEDIRECT_CORS_ORIGINS` | `*`     | Comma-separated allowed origins                 |
+| `CINEDIRECT_RATE_LIMIT`   | `30`    | Requests allowed per client IP window           |
 
-In `index.html`, set the `RELAY` constant to that URL:
+## Deploying
 
-```js
-var RELAY = "https://cinedirect-relay.<subdomain>.workers.dev";
-```
+CI runs lint, typecheck, 85+ unit tests, server checks (ruff/mypy/pytest), and
+a Playwright e2e suite. On `main`, `.github/workflows/deploy.yml` publishes:
 
-### 3. Push to GitHub
+1. **Client → GitHub Pages** (`gh-pages -d dist`, relative asset base, hash
+   routing — works under `<user>.github.io/<repo>`).
+2. **Worker → Cloudflare** (`npm run deploy:worker`, requires the
+   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets). Optional KV
+   caching: uncomment `kv_namespaces` in `worker/wrangler.toml` and provision
+   the namespace first.
+3. **Server image → GHCR** (`ghcr.io/<owner>/<repo>/cinedirect-server:latest`).
 
-GitHub Pages auto-builds from the repo. With `RELAY` set, the live site now
-probes the worker, resolves every link to its direct file URL, and proxies
-Pixeldrain downloads through `…/api/dl?src=…` exactly like local.
+For the deployed site to hand out true direct links, deploy the **worker
+relay** and rebuild the client with `VITE_RELAY_URL=https://cinedirect-relay.<subdomain>.workers.dev`.
+Without a worker, the site still works in static mode (redirect/`/u/` links).
 
-> **No worker?** The site still works in static mode but shows `Via redirect`
-> rows for hubdrive/hubcloud and `/u/` links for Pixeldrain on the detail view —
-> it just can't hand out true direct blob URLs without a server.
-
-### Testing an undeployed relay
+## Testing
 
 ```bash
-cd worker
-node harness.mjs 8300
+npm run lint && npm run typecheck && npm test && npm run build   # all workspaces
+npm run test:e2e          # Playwright (chromium + mobile emulation)
+cd server && ./.venv/bin/ruff check . && ./.venv/bin/mypy app run.py && ./.venv/bin/python -m pytest -q
 ```
-then open the page with `?relay=http://localhost:8300`.
 
----
+E2E tests intercept every remote API (`hblinks.co`, `tvmaze`, `wikipedia`) with
+deterministic fixtures so the suite runs offline.
 
-## Notes
+## Legal note
 
-- `RELAY` is empty by default; the `?relay=` query param overrides it for
-  testing without editing the file.
-- Worker is a plain Cloudflare Worker (`worker/relay.js`), deployable with
-  Wrangler; see `worker/README` notes in code comments.
-- The resolver caches successes in `hubcdn_resolve_cache.json` (local server)
-  so repeat searches are instant. Transient failures are never cached.
+This is a hard link-collection tool for movies and TV shows. The refactor did
+not change what it does or who it targets; a data-free dropdown/picker UI for a
+different purpose is a separate future effort.
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the internal design.

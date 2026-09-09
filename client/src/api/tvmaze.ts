@@ -9,6 +9,7 @@
 import type { TvMazeMeta } from "@shared/types";
 
 import { stripHtml } from "../core/parsing";
+import { withRevalidation } from "../state/persistence";
 
 /* ------------------------------------------------------------------ */
 /*  Constants & types                                                  */
@@ -88,9 +89,11 @@ function mapMeta(show: TvMazeShow): TvMazeMeta {
  */
 export class TvMazeClient {
   private cache: Map<string, TvMazeMeta | null>;
+  private posterCache: Map<string, string | null>;
 
   constructor() {
     this.cache = new Map();
+    this.posterCache = new Map();
   }
 
   /** Fetch metadata for a show by name (exact single-show lookup). */
@@ -98,44 +101,61 @@ export class TvMazeClient {
     const key = cacheKey(name);
     if (this.cache.has(key)) return this.cache.get(key)!;
 
-    try {
-      const res = await fetchWithTimeout(
-        SHOW_URL + encodeURIComponent(name),
-        TVMAZE_TIMEOUT,
-      );
-      if (!res.ok) {
-        this.cache.set(key, null);
-        return null;
-      }
-      const show = (await res.json()) as TvMazeShow;
-      const meta = mapMeta(show);
-      this.cache.set(key, meta);
-      return meta;
-    } catch {
-      this.cache.set(key, null);
-      return null;
-    }
+    const meta = await withRevalidation<TvMazeMeta | null>(
+      "meta-cache",
+      `tv:${key}`,
+      async () => {
+        try {
+          const res = await fetchWithTimeout(
+            SHOW_URL + encodeURIComponent(name),
+            TVMAZE_TIMEOUT,
+          );
+          if (!res.ok) return null;
+          const show = (await res.json()) as TvMazeShow;
+          return mapMeta(show);
+        } catch {
+          return null;
+        }
+      },
+      7 * 24 * 60 * 60 * 1000, // TVMaze metadata changes rarely.
+      false, // serve from cache indefinitely; clearStale() evicts on boot.
+    );
+    this.cache.set(key, meta);
+    return meta;
   }
 
   /** Search all shows by name and return the best match's poster URL. */
   async getPoster(name: string): Promise<string | null> {
-    try {
-      const res = await fetchWithTimeout(
-        SEARCH_URL + encodeURIComponent(name),
-        TVMAZE_TIMEOUT,
-      );
-      if (!res.ok) return null;
+    const key = cacheKey(name);
+    if (this.posterCache.has(key)) return this.posterCache.get(key)!;
 
-      const data: unknown = await res.json();
-      if (!Array.isArray(data) || data.length === 0) return null;
+    const poster = await withRevalidation<string | null>(
+      "poster-cache",
+      `tv:${key}`,
+      async () => {
+        try {
+          const res = await fetchWithTimeout(
+            SEARCH_URL + encodeURIComponent(name),
+            TVMAZE_TIMEOUT,
+          );
+          if (!res.ok) return null;
 
-      // The API sorts results by relevance, so the first hit is the best.
-      const best = data[0] as TvMazeSearchHit;
-      return normalizeUrl(
-        best.show?.image?.original ?? best.show?.image?.medium ?? null,
-      );
-    } catch {
-      return null;
-    }
+          const data: unknown = await res.json();
+          if (!Array.isArray(data) || data.length === 0) return null;
+
+          // The API sorts results by relevance, so the first hit is the best.
+          const best = data[0] as TvMazeSearchHit;
+          return normalizeUrl(
+            best.show?.image?.original ?? best.show?.image?.medium ?? null,
+          );
+        } catch {
+          return null;
+        }
+      },
+      7 * 24 * 60 * 60 * 1000,
+      false,
+    );
+    this.posterCache.set(key, poster);
+    return poster;
   }
 }

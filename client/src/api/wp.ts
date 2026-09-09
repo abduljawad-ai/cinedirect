@@ -12,6 +12,7 @@
 import type { HostKind, HubLink, Post, Quality, RawPost } from "@shared/types";
 
 import { stripHtml } from "../core/parsing";
+import { withRevalidation } from "../state/persistence";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -238,34 +239,42 @@ export class WpClient {
 
   /** Fetch posts from the WP REST API, enriched with extracted links. */
   async search(query?: string): Promise<Post[]> {
-    try {
-      const url = new URL(this.baseUrl);
-      url.searchParams.set("per_page", String(this.perPage));
-      url.searchParams.set("_fields", "id,title,link,date,content");
-      if (query && query.trim()) url.searchParams.set("search", query.trim());
+    const q = (query ?? "").trim();
+    return withRevalidation<Post[]>(
+      "api-cache",
+      `wp:${q || "all"}`,
+      async () => {
+        try {
+          const url = new URL(this.baseUrl);
+          url.searchParams.set("per_page", String(this.perPage));
+          url.searchParams.set("_fields", "id,title,link,date,content");
+          if (q) url.searchParams.set("search", q);
 
-      const res = await fetchWithTimeout(url.toString(), this.timeout);
-      if (!res.ok) return [];
+          const res = await fetchWithTimeout(url.toString(), this.timeout);
+          if (!res.ok) return [];
 
-      const data: unknown = await res.json();
-      if (!Array.isArray(data)) return [];
+          const data: unknown = await res.json();
+          if (!Array.isArray(data)) return [];
 
-      return data.map((item): Post => {
-        const rp = item as Partial<RawPost>;
-        const { hubcdn: direct, all } = extractLinks(
-          rp.content?.rendered ?? "",
-        );
-        return {
-          id: rp.id ?? 0,
-          title: cleanTitle(rp.title?.rendered ?? ""),
-          link: rp.link ?? "",
-          date: rp.date ?? "",
-          direct,
-          allLinks: all,
-        };
-      });
-    } catch {
-      return [];
-    }
+          return data.map((item): Post => {
+            const rp = item as Partial<RawPost>;
+            const { hubcdn: direct, all } = extractLinks(
+              rp.content?.rendered ?? "",
+            );
+            return {
+              id: rp.id ?? 0,
+              title: cleanTitle(rp.title?.rendered ?? ""),
+              link: rp.link ?? "",
+              date: rp.date ?? "",
+              direct,
+              allLinks: all,
+            };
+          });
+        } catch {
+          return [];
+        }
+      },
+      10 * 60 * 1000,
+    );
   }
 }

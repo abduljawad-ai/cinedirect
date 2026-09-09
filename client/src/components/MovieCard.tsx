@@ -77,7 +77,12 @@ export function MovieCard({ item, group }: MovieCardProps) {
             "Year unknown"}
         </p>
 
-        <a class={styles.cardLink} href={link} aria-label={ariaLabel}>
+        <a
+          class={styles.cardLink}
+          href={link}
+          aria-label={ariaLabel}
+          data-testid="card-link"
+        >
           Open release{" "}
           <span class={styles.cardArrow} aria-hidden="true">
             →

@@ -13,6 +13,8 @@
 /*  Constants & types                                                  */
 /* ------------------------------------------------------------------ */
 
+import { withRevalidation } from "../state/persistence";
+
 const WIKI_TIMEOUT = 10000;
 
 const SEARCH_API =
@@ -157,19 +159,24 @@ export class WikipediaClient {
     const key = `${name}|${year ?? ""}`;
     if (this.cache.has(key)) return this.cache.get(key)!;
 
-    for (const variant of this.variantsFor(name, year)) {
-      const title = await this.searchBestTitle(variant, name);
-      if (!title) continue;
+    const poster = await withRevalidation<string | null>(
+      "poster-cache",
+      `wiki:${key}`,
+      async () => {
+        for (const variant of this.variantsFor(name, year)) {
+          const title = await this.searchBestTitle(variant, name);
+          if (!title) continue;
 
-      const thumb = await this.thumbnailFor(title);
-      if (thumb) {
-        this.cache.set(key, thumb);
-        return thumb;
-      }
-    }
-
-    this.cache.set(key, null);
-    return null;
+          const thumb = await this.thumbnailFor(title);
+          if (thumb) return thumb;
+        }
+        return null;
+      },
+      7 * 24 * 60 * 60 * 1000,
+      false, // serve from cache indefinitely; clearStale() evicts on boot.
+    );
+    this.cache.set(key, poster);
+    return poster;
   }
 
   /** Ordered list of search queries to try for a name + optional year. */

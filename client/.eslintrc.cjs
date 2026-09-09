@@ -12,7 +12,7 @@ module.exports = {
     ecmaFeatures: { jsx: true },
   },
   settings: {
-    react: { pragma: 'h', version: 'detect' },
+    react: { pragma: 'h', version: '18.2.0' },
   },
   plugins: ['@typescript-eslint', 'react', 'react-hooks', 'jsx-a11y'],
   extends: [

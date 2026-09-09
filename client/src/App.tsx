@@ -29,6 +29,7 @@ import { Resolver } from "./core/resolution";
 import { groupByMovie, indexEditions } from "./core/grouping";
 import { WikipediaClient } from "./api/wikipedia";
 import { TvMazeClient } from "./api/tvmaze";
+import { CacheDB } from "./state/persistence";
 import type { ShowGroup, AppMode, EditionIndexEntry } from "@shared/types";
 
 /* ------------------------------------------------------------------ */
@@ -183,18 +184,30 @@ export function App() {
       editionsSignal.value[decodedKey];
 
     if (!entry) {
-      // Hard refresh: editions were wiped with page state. Navigate back to
-      // search view where the user can re-run the query.
+      // Hard refresh: the in-memory edition index is rebuilt by the boot
+      // search (startup effect). Keep the detail view loading until the
+      // index repopulates; bail out to search after a grace period.
       setDetailState({
-        key: null,
-        loading: false,
+        key: decodedKey,
+        loading: true,
         meta: null,
         rows: [],
-        error: "Release index unavailable — please search again.",
+        error: null,
       });
-      setRoute({ view: "search", key: null });
-      window.location.hash = "#/";
-      return;
+      const grace = window.setTimeout(() => {
+        if (!editionsSignal.value[decodedKey]) {
+          setDetailState({
+            key: null,
+            loading: false,
+            meta: null,
+            rows: [],
+            error: "Release not found — please search again.",
+          });
+          setRoute({ view: "search", key: null });
+          window.location.hash = "#/";
+        }
+      }, 8000);
+      return () => window.clearTimeout(grace);
     }
 
     let cancelled = false;
@@ -245,7 +258,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [detailKey]);
+  }, [detailKey, editionsSignal.value]);
 
   /* ---- pick the entry for the current detail route (if any) ----- */
 
@@ -266,6 +279,18 @@ export function App() {
 
     const urlParams = new URLSearchParams(window.location.search);
     const relayParam = urlParams.get("relay") ?? "";
+
+    // Drop expired cache entries once per session (fail-soft if IndexedDB
+    // is unavailable).
+    CacheDB.getInstance()
+      .clearStale("api-cache", 30 * 60 * 1000)
+      .catch(() => undefined);
+    CacheDB.getInstance()
+      .clearStale("poster-cache", 7 * 24 * 60 * 60 * 1000)
+      .catch(() => undefined);
+    CacheDB.getInstance()
+      .clearStale("meta-cache", 7 * 24 * 60 * 60 * 1000)
+      .catch(() => undefined);
 
     let cancelled = false;
     probeMode().then((mode) => {
@@ -295,7 +320,7 @@ export function App() {
 
   let view: h.JSX.Element;
   if (route.view === "detail") {
-    if (!detailKey || !detailEntry) {
+    if (!detailKey) {
       view = (
         <div class="app-error" role="alert">
           <p>
@@ -310,6 +335,15 @@ export function App() {
           >
             Back to search
           </button>
+        </div>
+      );
+    } else if (!detailEntry) {
+      // Hard refresh: the edition index is still being rebuilt by the boot
+      // search. Keep a lightweight loading state instead of flashing an error.
+      view = (
+        <div class="detail-loading" role="status" aria-live="polite">
+          <span class="app-spinner" aria-hidden="true" />
+          <p>Loading release…</p>
         </div>
       );
     } else {

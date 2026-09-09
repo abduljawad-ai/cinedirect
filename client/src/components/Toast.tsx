@@ -54,7 +54,6 @@ function ToastItem({
     <div
       class={`${styles.toast} ${typeClass} ${exiting ? styles.toastExit : ""}`}
       role="alert"
-      onClick={dismiss}
     >
       <span class={styles.toastMessage}>{toast.message}</span>
       <button

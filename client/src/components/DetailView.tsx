@@ -66,7 +66,11 @@ export function DetailView({
 
   return (
     <div class={styles.detailContainer}>
-      <button class={styles.backButton} onClick={onBack}>
+      <button
+        class={styles.backButton}
+        onClick={onBack}
+        data-testid="back-button"
+      >
         <span aria-hidden="true">←</span> Back to results
       </button>
 
@@ -141,7 +145,7 @@ export function DetailView({
               key={`${row.quality ?? "any"}-${idx}`}
               class={styles.qualityRow}
             >
-              <span class={styles.qualityLabel}>
+              <span class={styles.qualityLabel} data-testid="quality-label">
                 {row.quality ?? "Unknown"}
               </span>
               <span class={styles.qualityMeta}>
@@ -154,6 +158,7 @@ export function DetailView({
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={`Download ${name} ${row.quality ?? ""} from ${row.hostTag || "host"}`}
+                data-testid="quality-link"
               >
                 Get link
               </a>

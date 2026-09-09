@@ -25,6 +25,12 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
+/**
+ * String-keyed IndexedDB cache with three stores.
+ *
+ * Raw values are stored/returned as-is; the timestamp envelope
+ * (`{ data, timestamp }`) is managed by {@link withRevalidation}.
+ */
 export class CacheDB {
   private db: Promise<IDBPDatabase<CacheSchema>>;
   private static instance?: CacheDB;
@@ -60,7 +66,10 @@ export class CacheDB {
     try {
       const db = await this.db;
       const value = await db.get(store, key);
-      return (value as T | undefined) ?? undefined;
+      // Distinguish a real `undefined` (miss) from a stored `null` miss so
+      // caching negative lookups stays correct.
+      if (value === undefined) return undefined;
+      return value as T;
     } catch {
       return undefined;
     }
@@ -69,10 +78,33 @@ export class CacheDB {
   async set<T>(store: StoreName, key: string, value: T): Promise<void> {
     try {
       const db = await this.db;
-      const entry = { data: value, timestamp: Date.now() };
-      await db.put(store, entry as never, key);
+      await db.put(store, value as never, key);
     } catch {
       // IndexedDB unavailable (private mode, quota) — fail soft.
+    }
+  }
+
+  /** Return all entries (with their keys) in a store. */
+  async getAll<T>(store: StoreName): Promise<Array<{ key: string; value: T }>> {
+    try {
+      const db = await this.db;
+      const keys = await db.getAllKeys(store);
+      const values = await db.getAll(store);
+      return keys.map((k, i) => ({ key: String(k), value: values[i] as T }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Wipe every store (used by tests and the "clear cache" affordance). */
+  async clearAll(): Promise<void> {
+    try {
+      const db = await this.db;
+      for (const store of ["api-cache", "poster-cache", "meta-cache"] as const) {
+        await db.clear(store);
+      }
+    } catch {
+      // Fail soft.
     }
   }
 
