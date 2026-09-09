@@ -4,6 +4,7 @@ import {
   hostTagOf,
   directHref,
   editionHubs,
+  type EditionProgress,
 } from '../src/core/resolution';
 import type { EditionGroup, HubLink } from '@shared/types';
 
@@ -330,13 +331,13 @@ describe('Resolver.resolveMany (relay mode)', () => {
 });
 
 describe('Resolver.resolveEditionProgressive', () => {
-  it('streams rows incrementally as each hub settles', async () => {
+  it('paints skeleton slots first, then fills rows as each hub settles', async () => {
     const resolver = new Resolver({
       mode: 'static',
       relayUrl: '',
       apiFn: () => '',
     });
-    const emissions: number[] = [];
+    const seen: EditionProgress[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
@@ -349,11 +350,55 @@ describe('Resolver.resolveEditionProgressive', () => {
       { url: 'https://pixeldrain.dev/u/aaa', quality: '1080P', kind: 'pixeldrain' },
       { url: 'https://pixeldrain.dev/u/bbb', quality: '720P', kind: 'pixeldrain' },
     ];
-    const rows = await resolver.resolveEditionProgressive(hubs, (partial) =>
-      emissions.push(partial.length),
+    const rows = await resolver.resolveEditionProgressive(hubs, (p) =>
+      seen.push(p),
     );
-    expect(emissions).toEqual([1, 2]);
+
+    // Initial + one emission per settled hub.
+    expect(seen).toHaveLength(3);
+    // Up-front emission: every slot pending, no rows — the skeleton paint.
+    expect(seen[0].pending.map((h) => h.url)).toEqual(hubs.map((h) => h.url));
+    expect(seen[0].rows).toHaveLength(0);
+    expect(seen[0].slots.every((s) => s.status === 'pending')).toBe(true);
+    // Monotonic fill: one row, then the full, quality-sorted set.
+    expect(seen[1].rows).toHaveLength(1);
+    expect(seen[2].rows).toHaveLength(2);
+    expect(seen[2].pending).toHaveLength(0);
+    // Slots keep hub order and carry the settled row.
+    expect(seen[2].slots.map((s) => (s.status === 'done' ? s.row?.quality : null))).toEqual(['1080P', '720P']);
     expect(rows.map((r) => r.quality)).toEqual(['1080P', '720P']);
+    vi.unstubAllGlobals();
+  });
+
+  it('resolves hubs in parallel up to the atOnce cap', async () => {
+    const resolver = new Resolver({
+      mode: 'static',
+      relayUrl: '',
+      apiFn: () => '',
+    });
+    let active = 0;
+    let peak = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((r) => setTimeout(r, 20));
+        active -= 1;
+        return new Response(JSON.stringify({ name: 'x.mkv', size: 1 }), {
+          status: 200,
+        });
+      }),
+    );
+    const hubs: HubLink[] = Array.from({ length: 4 }, (_, i) => ({
+      url: `https://pixeldrain.dev/u/${i}`,
+      quality: '1080P',
+      kind: 'pixeldrain',
+    }));
+    await resolver.resolveEditionProgressive(hubs, () => {});
+    // Serial resolution (the old loop) would peak at 1; a common cap runs 4
+    // fetch-based resolutions well past that.
+    expect(peak).toBeGreaterThan(1);
     vi.unstubAllGlobals();
   });
 });

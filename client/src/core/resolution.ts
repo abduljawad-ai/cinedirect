@@ -153,6 +153,27 @@ export interface ResolveResult {
   results: (ResolvedLink | null)[];
 }
 
+/** One hub link's live resolution status, kept in edition hub order. */
+export type HubSlotStatus =
+  | { hub: HubLink; status: "pending"; row: null }
+  | { hub: HubLink; status: "done"; row: ResolvedLink | null };
+
+/** Progress snapshot emitted while an edition's links are resolving. */
+export interface EditionProgress {
+  /** Fixed-length slot list aligned with the input hubs (order preserved). */
+  slots: HubSlotStatus[];
+  /** Deduped, quality-sorted rows produced so far. */
+  rows: QualityRow[];
+  /** Hubs still resolving (these render as skeleton slots). */
+  pending: HubLink[];
+}
+
+function isPending(
+  s: HubSlotStatus,
+): s is Extract<HubSlotStatus, { status: "pending" }> {
+  return s.status === "pending";
+}
+
 /* ------------------------------------------------------------------ */
 /*  Resolver                                                           */
 /* ------------------------------------------------------------------ */
@@ -267,23 +288,70 @@ export class Resolver {
   }
 
   /**
-   * Resolve an edition's hub links one at a time, invoking `onRows` with the
-   * latest deduped, quality-sorted rows after every settled link — streams
-   * rows into the detail view as they arrive instead of a blocking wait.
+   * Resolve an edition's hub links in parallel (capped by `atOnce`), invoking
+   * `onProgress` with the latest {@link EditionProgress} after every settled
+   * link plus once up front with every slot still pending — so the detail view
+   * can paint its skeleton rows immediately and fill them in as links land.
+   *
+   * `pending` carries the hubs that have not settled yet; a settled hub that
+   * produced no link simply disappears (its gap is hidden by the rows that
+   * dedupe around it). Returns the final deduped, quality-sorted rows.
    */
   async resolveEditionProgressive(
     hubs: HubLink[],
-    onRows: (rows: QualityRow[]) => void,
+    onProgress: (p: EditionProgress) => void,
+    atOnce = 6,
   ): Promise<QualityRow[]> {
-    const results: (ResolvedLink | null)[] = [];
-    for (const hub of hubs) {
+    const slots: HubSlotStatus[] = hubs.map((hub) => ({
+      hub,
+      status: "pending",
+      row: null,
+    }));
+    const emit = (): EditionProgress => ({
+      slots: slots.slice(),
+      rows: this.qualityRows(
+        slots.map((s) => (s.status === "done" ? s.row : null)),
+      ),
+      pending: slots.filter(isPending).map((s) => s.hub),
+    });
+
+    // Skeleton-first: report the pending slots before any network talk so the
+    // view paints placeholders on the very first tick.
+    onProgress(emit());
+
+    await this.mapPool(hubs, atOnce, async (hub, i) => {
       const r = await this.resolveOne(hub.url);
-      results.push(
-        r ? (r.quality ? r : { ...r, quality: hub.quality ?? null }) : null,
-      );
-      onRows(this.qualityRows(results));
-    }
-    return this.qualityRows(results);
+      slots[i] = {
+        hub,
+        status: "done",
+        row: r ? (r.quality ? r : { ...r, quality: hub.quality ?? null }) : null,
+      };
+      onProgress(emit());
+    });
+
+    return this.qualityRows(
+      slots.map((s) => (s.status === "done" ? s.row : null)),
+    );
+  }
+
+  /** Run `fn` over `items` in parallel, capped at `atOnce` concurrent calls. */
+  private async mapPool<T, R>(
+    items: T[],
+    atOnce: number,
+    fn: (item: T, index: number) => Promise<R>,
+  ): Promise<R[]> {
+    const out = new Array<R>(items.length);
+    let next = 0;
+    const limit = Math.max(1, Math.min(atOnce, items.length));
+    await Promise.all(
+      Array.from({ length: limit }, async () => {
+        while (next < items.length) {
+          const i = next++;
+          out[i] = await fn(items[i], i);
+        }
+      }),
+    );
+    return out;
   }
 
   /** Clear the URL memo cache (between searches / mode changes). */

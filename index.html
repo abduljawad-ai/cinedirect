@@ -92,8 +92,8 @@
   .card:hover .open.secondary { color: var(--text); border-color: var(--accent); }
   .qrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.09); border-radius: 8px; text-decoration: none; color: inherit; transition: border-color .15s, background .15s; }
   .qrow:hover { border-color: var(--accent); background: rgba(255,255,255,.07); }
-  .qrow .qlabel { font-size: 12px; font-weight: 700; color: #e8eef7; letter-spacing: .3px; }
-  .qrow .qbtn { font-size: 11px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+  .qrow .qlabel { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; color: #e8eef7; letter-spacing: .3px; }
+  .qrow .qbtn { flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--accent); white-space: nowrap; }
   .qrow.done .qbtn { color: #9fe8b0; }
   .qrow.bad .qbtn { color: var(--muted); }
 
@@ -149,7 +149,55 @@
   .detail-synopsis { font-size: 13.5px; line-height: 1.6; color: #c3d0de; }
   .detail-links { margin-top: 6px; }
   .detail-links .actions { max-width: 640px; }
-  @media (max-width: 560px) { .detail-hero { flex-direction: column; align-items: stretch; } .detail-poster { width: 100%; max-width: 240px; margin: 0 auto; } }
+  /* ---- Mobile: search grid 2-col, cards compact, detail stacked ---- */
+  @media (max-width: 480px) {
+    .container { padding: 6px 12px 48px; }
+    header.top { padding: 2px 0 0; }
+    header.top h1 { font-size: 19px; }
+
+    .search-wrap { gap: 8px; margin: 8px auto 4px; }
+    .search-wrap input[type="text"] { padding: 7px 12px; font-size: 15px; }
+    .search-wrap button { padding: 7px 14px; font-size: 14px; }
+    .hint { display: none; }
+    #mode { display: none; }
+
+    .stats { font-size: 10px; margin: 2px 2px 4px; }
+    .show-header { margin: 8px 2px 4px; font-size: 13px; }
+    .season-header { margin: 6px 2px 4px; font-size: 10px; }
+
+    .results-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
+
+    .card { border-radius: 10px; }
+    .poster { aspect-ratio: 3/4; }
+    .card-body { padding: 5px 8px 7px; gap: 3px; }
+    .card-title { font-size: 11px; line-height: 1.25; -webkit-line-clamp: 1; }
+    .meta { display: none; }
+    .card-tags { flex-wrap: nowrap; overflow: hidden; gap: 3px; }
+    .card-tags span { font-size: 8px; padding: 2px 4px; }
+    .edition-badge { font-size: 8px; padding: 1px 5px; }
+    .details-btn { font-size: 10px; padding: 4px 6px; margin-top: 4px !important; }
+
+    .quality-badge { font-size: 10px; padding: 3px 7px; top: 6px; right: 6px; }
+    .ep-badge { font-size: 10px; padding: 3px 7px; bottom: 6px; left: 6px; }
+
+    /* Detail view — stack hero vertically */
+    .detail-hero { flex-direction: column; align-items: stretch; gap: 14px; }
+    .detail-poster { width: 100%; max-width: 190px; margin: 0 auto; }
+    .detail-title { font-size: 18px; }
+    .detail-synopsis { font-size: 12.5px; }
+    .detail-chips span { font-size: 10px; }
+
+    /* Fix Source + direct links overlapping */
+    .detail-links .actions { width: 100%; }
+    .detail-links .actions .qrow { width: 100%; }
+    .detail-links .open.secondary { display: block; width: 100%; text-align: center; margin-top: 10px !important; }
+    .detail-links .season-header { font-size: 12px; }
+  }
+
+  /* Slightly wider phones / landscape */
+  @media (min-width: 481px) and (max-width: 768px) {
+    .results-grid { grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  }
 </style>
 </head>
 <body>

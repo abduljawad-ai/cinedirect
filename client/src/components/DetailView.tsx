@@ -1,11 +1,13 @@
-import { h } from "preact";
+import { h, Fragment } from "preact";
 import type {
   ShowGroup,
   EditionGroup,
   TvMazeMeta,
   QualityRow,
+  HubLink,
 } from "@shared/types";
 import { stripHtml, formatBytes } from "../core/parsing";
+import { hostTagOf } from "../core/resolution";
 import styles from "../styles/components.module.css";
 
 interface DetailViewProps {
@@ -17,6 +19,8 @@ interface DetailViewProps {
   loading: boolean;
   /** True while download links are still being resolved (streamed in). */
   resolving?: boolean;
+  /** Hubs still resolving — rendered as skeleton rows in their positions. */
+  pending?: HubLink[];
   onBack: () => void;
 }
 
@@ -37,6 +41,7 @@ export function DetailView({
   rows,
   loading,
   resolving = false,
+  pending = [],
   onBack,
 }: DetailViewProps) {
   if (loading) {
@@ -136,9 +141,15 @@ export function DetailView({
       <section
         class={styles.downloadSection}
         aria-label={`Download options for ${name} (${editionKey})`}
+        aria-busy={resolving}
       >
         <h2 class={styles.downloadSectionTitle}>Download</h2>
-        {rows.length === 0 ? (
+        {resolving && rows.length > 0 && (
+          <p class={styles.resolvingNote} role="status" aria-live="polite">
+            Resolving download links…
+          </p>
+        )}
+        {rows.length === 0 && pending.length === 0 ? (
           resolving ? (
             <div class={styles.loadingContainer} role="status" aria-live="polite">
               <span class={styles.loadingSpinner} aria-hidden="true" />
@@ -150,30 +161,49 @@ export function DetailView({
             </p>
           )
         ) : (
-          rows.map((row, idx) => (
-            <div
-              key={`${row.quality ?? "any"}-${idx}`}
-              class={styles.qualityRow}
-            >
-              <span class={styles.qualityLabel} data-testid="quality-label">
-                {row.quality ?? "Unknown"}
-              </span>
-              <span class={styles.qualityMeta}>
-                {formatBytes(row.size) || "Size unavailable"}
-                {row.hostTag ? ` · ${row.hostTag}` : ""}
-              </span>
-              <a
-                class={styles.qualityLink}
-                href={row.direct}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`Download ${name} ${row.quality ?? ""} from ${row.hostTag || "host"}`}
-                data-testid="quality-link"
+          <Fragment>
+            {rows.map((row, idx) => (
+              <div
+                key={`${row.quality ?? "any"}-${idx}`}
+                class={styles.qualityRow}
               >
-                Get link
-              </a>
-            </div>
-          ))
+                <span class={styles.qualityLabel} data-testid="quality-label">
+                  {row.quality ?? "Unknown"}
+                </span>
+                <span class={styles.qualityMeta}>
+                  {formatBytes(row.size) || "Size unavailable"}
+                  {row.hostTag ? ` · ${row.hostTag}` : ""}
+                </span>
+                <a
+                  class={styles.qualityLink}
+                  href={row.direct}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Download ${name} ${row.quality ?? ""} from ${row.hostTag || "host"}`}
+                  data-testid="quality-link"
+                >
+                  Get link
+                </a>
+              </div>
+            ))}
+            {pending.map((hub, pi) => (
+              <div
+                key={`pending-${hub.url}-${pi}`}
+                class={styles.qualityRow}
+                data-testid="link-skeleton"
+                role="status"
+                aria-live="polite"
+              >
+                <span class={styles.qualityLabel}>
+                  {hub.quality ?? "Unknown"}
+                </span>
+                <span class={styles.qualityMeta}>
+                  {hostTagOf(hub.url)} · resolving…
+                </span>
+                <span class={styles.skeletonPill} aria-hidden="true" />
+              </div>
+            ))}
+          </Fragment>
         )}
       </section>
 

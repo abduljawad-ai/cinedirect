@@ -271,6 +271,7 @@ export function App() {
         rows: [],
         error: null,
         resolving: false,
+        pending: [],
       });
       const grace = window.setTimeout(() => {
         if (!editionsSignal.value[decodedKey]) {
@@ -281,6 +282,7 @@ export function App() {
             rows: [],
             error: "Release not found — please search again.",
             resolving: false,
+            pending: [],
           });
           setRoute({ view: "search", key: null });
           window.location.hash = "#/";
@@ -294,7 +296,8 @@ export function App() {
     const hubs = editionHubs(edition);
     const resolver = getResolver(resolverRef);
 
-    // Paint instantly — the hero renders while links resolve / stream in.
+    // Paint instantly — the hero and per-link skeleton rows render while the
+    // links resolve in the background.
     setDetailState({
       key: decodedKey,
       loading: false,
@@ -302,6 +305,7 @@ export function App() {
       rows: [],
       error: null,
       resolving: hubs.length > 0,
+      pending: hubs,
     });
 
     // Metadata is independent of link resolution — stream it in as a patch.
@@ -316,25 +320,30 @@ export function App() {
       const cached = await getCachedRows(decodedKey);
       if (cancelled) return;
       if (cached) {
-        setDetailState({ key: decodedKey, rows: cached, resolving: false });
+        setDetailState({ key: decodedKey, rows: cached, resolving: false, pending: [] });
         return;
       }
       if (!hubs.length) {
-        setDetailState({ key: decodedKey, rows: [], resolving: false });
+        setDetailState({ key: decodedKey, rows: [], resolving: false, pending: [] });
         return;
       }
-      // Progressive: rows stream in as each hub link settles, so direct
-      // links appear immediately while hub wrappers are still resolving.
-      const rows = await resolver.resolveEditionProgressive(hubs, (partial) => {
+      // Progressive: every skeleton slot fills in as its hub settles, so the
+      // listed links appear in place while the rest are still resolving.
+      const rows = await resolver.resolveEditionProgressive(hubs, (p) => {
         if (cancelled) return;
-        setDetailState({ key: decodedKey, rows: partial, resolving: true });
+        setDetailState({
+          key: decodedKey,
+          rows: p.rows,
+          resolving: p.pending.length > 0,
+          pending: p.pending,
+        });
       });
       if (cancelled) return;
-      setDetailState({ key: decodedKey, rows, resolving: false });
+      setDetailState({ key: decodedKey, rows, resolving: false, pending: [] });
       await cacheRows(decodedKey, rows);
     })().catch(() => {
       if (cancelled) return;
-      setDetailState({ key: decodedKey, rows: [], resolving: false });
+      setDetailState({ key: decodedKey, rows: [], resolving: false, pending: [] });
     });
 
     return () => {
@@ -443,6 +452,7 @@ export function App() {
           edition={detailEntry.edition}
           meta={detailIsCurrent ? detail.meta : null}
           rows={detailIsCurrent ? detail.rows : []}
+          pending={detailIsCurrent ? detail.pending : editionHubs(detailEntry.edition)}
           loading={detail.loading}
           resolving={detailIsCurrent ? detail.resolving : true}
           onBack={() => {

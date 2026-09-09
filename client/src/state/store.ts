@@ -8,6 +8,7 @@ import type {
   EditionIndexEntry,
   TvMazeMeta,
   QualityRow,
+  HubLink,
 } from "@shared/types";
 
 /** Per-edition detail view state (loaded lazily when a detail route opens). */
@@ -19,6 +20,8 @@ export interface DetailState {
   error: string | null;
   /** True while download links are still being resolved. */
   resolving: boolean;
+  /** Hubs whose links are still resolving — rendered as skeleton rows. */
+  pending: HubLink[];
 }
 
 export const groupsSignal = signal<ShowGroup[]>([]);
@@ -37,6 +40,7 @@ export const detailStateSignal = signal<DetailState>({
   rows: [],
   error: null,
   resolving: false,
+  pending: [],
 });
 
 export const hasResults = computed(() => groupsSignal.value.length > 0);
