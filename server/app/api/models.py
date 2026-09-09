@@ -13,6 +13,10 @@ class ResolveResponse(BaseModel):
     quality: str | None = None
 
 
+class ResolveBatchResponse(BaseModel):
+    results: list[ResolveResponse | None]
+
+
 class HealthResponse(BaseModel):
     ok: bool = True
     version: str = "2.0.0"

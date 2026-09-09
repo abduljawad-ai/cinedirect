@@ -67,6 +67,69 @@ class TestResolve:
         assert resp.json()["direct"] is None
 
 
+# ── /api/resolve (batch) ─────────────────────────────────────────────────────
+class TestResolveBatch:
+    async def test_empty_urls_returns_400(self, client: AsyncClient) -> None:
+        resp = await client.post("/api/resolve", json={"urls": []})
+        assert resp.status_code == 400
+
+    async def test_too_many_urls_returns_400(self, client: AsyncClient) -> None:
+        resp = await client.post(
+            "/api/resolve",
+            json={"urls": ["https://hubcdn.sbs/file/x"] * 21},
+        )
+        assert resp.status_code == 400
+
+    @patch("app.api.routes.resolve_direct", new_callable=AsyncMock)
+    async def test_batch_preserves_order(
+        self, mock_resolve: AsyncMock, client: AsyncClient
+    ) -> None:
+        mock_resolve.side_effect = [
+            {
+                "direct": "https://pub-1.r2.dev/a.mkv",
+                "size": 1,
+                "filename": "A.1080p.mkv",
+                "quality": "1080P",
+            },
+            {
+                "direct": "https://pub-1.r2.dev/b.mkv",
+                "size": 2,
+                "filename": "B.720p.mkv",
+                "quality": "720P",
+            },
+        ]
+        resp = await client.post(
+            "/api/resolve",
+            json={"urls": ["https://hubcdn.sbs/file/1", "https://hubcdn.sbs/file/2"]},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert [r["direct"] for r in body["results"]] == [
+            "https://pub-1.r2.dev/a.mkv",
+            "https://pub-1.r2.dev/b.mkv",
+        ]
+
+    @patch("app.api.routes.resolve_direct", new_callable=AsyncMock)
+    async def test_batch_per_item_failures_are_null(
+        self, mock_resolve: AsyncMock, client: AsyncClient
+    ) -> None:
+        mock_resolve.side_effect = [
+            {"direct": None, "size": None, "filename": None, "quality": None},
+            Exception("upstream boom"),
+        ]
+        resp = await client.post(
+            "/api/resolve",
+            json={"urls": ["https://hubcdn.sbs/bad", "https://hubcdn.sbs/dead"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["results"] == [None, None]
+
+    async def test_batch_non_string_items_are_null(self, client: AsyncClient) -> None:
+        resp = await client.post("/api/resolve", json={"urls": [123, None]})
+        assert resp.status_code == 200
+        assert resp.json()["results"] == [None, None]
+
+
 # ── /api/dl ──────────────────────────────────────────────────────────────────
 class TestDl:
     async def test_bad_src_returns_400(self, client: AsyncClient) -> None:

@@ -16,10 +16,12 @@
 
 import type {
   AppMode,
+  EditionGroup,
   HostKind,
   HubLink,
   Quality,
   QualityRow,
+  ResolveBatchResponse,
   ResolvedLink,
   ResolveResponse,
 } from "@shared/types";
@@ -39,16 +41,25 @@ const READER_MAX_ATTEMPTS = 3;
 /** Default timeout for a single reader fetch (ms). */
 const READER_TIMEOUT = 25000;
 
+/** Maximum URLs per batched /api/resolve request. */
+const BATCH_MAX = 20;
+
 /** Promise-style sleep. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Fetch wrapper that aborts after `ms` milliseconds. */
-async function resolveFetch(url: string, ms: number): Promise<Response> {
+async function resolveFetch(
+  url: string,
+  ms: number,
+  init?: RequestInit,
+): Promise<Response> {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), ms);
-  return fetch(url, { signal: ctl.signal }).finally(() => clearTimeout(t));
+  return fetch(url, { ...init, signal: ctl.signal }).finally(() =>
+    clearTimeout(t),
+  );
 }
 
 /**
@@ -97,6 +108,20 @@ export function hostTagOf(url: string): string {
 /** Direct download URLs are handed out as-is (no proxy wrapping). */
 export function directHref(url: string): string {
   return url;
+}
+
+/** Collect every distinct hub link in an edition, preserving order. */
+export function editionHubs(edition: EditionGroup): HubLink[] {
+  const seen = new Set<string>();
+  const out: HubLink[] = [];
+  for (const item of edition.items) {
+    for (const hub of item.post.direct) {
+      if (seen.has(hub.url)) continue;
+      seen.add(hub.url);
+      out.push(hub);
+    }
+  }
+  return out;
 }
 
 /**
@@ -191,26 +216,77 @@ export class Resolver {
   /**
    * Resolve every hub link of an edition, deduplicate by direct URL, and
    * sort into display rows (best quality first).
+   *
+   * In local / relay modes, hub wrapper links are batched into one
+   * `/api/resolve` request (a single rate-limit unit, ordered results);
+   * in static mode every link resolves through the serialized reader queue.
    */
   async resolveHubs(
     hubs: HubLink[],
     _archiveUrl: string,
   ): Promise<ResolveResult> {
-    const results = await Promise.all(
-      hubs.map(async (h) => {
-        const r = await this.resolveOne(h.url);
-        if (!r) return null;
-        return r.quality ? r : { ...r, quality: h.quality ?? null };
-      }),
-    );
+    const results = await this.resolveMany(hubs.map((h) => h.url));
+    const withQuality = results.map((r, i) => {
+      if (!r) return null;
+      return r.quality ? r : { ...r, quality: hubs[i]?.quality ?? null };
+    });
     return {
-      rows: this.qualityRows(results),
-      best: this.bestOf(results),
-      results,
+      rows: this.qualityRows(withQuality),
+      best: this.bestOf(withQuality),
+      results: withQuality,
     };
   }
 
-  /** Clear the memo cache (between searches / mode changes). */
+  /**
+   * Resolve many URLs, preserving the input order (duplicates are
+   * resolved once and broadcast to every occurrence).
+   *
+   * Raw direct links (R2, GDrive, S3) always resolve client-side with zero
+   * upstream network; hub wrapper links go through the batched `/api/resolve`
+   * in local / relay modes and the serialized reader queue in static mode.
+   */
+  resolveMany(urls: string[]): Promise<(ResolvedLink | null)[]> {
+    if (urls.length === 0) return Promise.resolve([]);
+    const out = new Array<ResolvedLink | null>(urls.length).fill(null);
+    const byUrl = new Map<string, number[]>();
+    const unique: string[] = [];
+    urls.forEach((u, i) => {
+      const idx = byUrl.get(u);
+      if (idx) idx.push(i);
+      else {
+        byUrl.set(u, [i]);
+        unique.push(u);
+      }
+    });
+    return this.resolveUnique(unique).then((resolved) => {
+      resolved.forEach((r, k) => {
+        for (const i of byUrl.get(unique[k])!) out[i] = r;
+      });
+      return out;
+    });
+  }
+
+  /**
+   * Resolve an edition's hub links one at a time, invoking `onRows` with the
+   * latest deduped, quality-sorted rows after every settled link — streams
+   * rows into the detail view as they arrive instead of a blocking wait.
+   */
+  async resolveEditionProgressive(
+    hubs: HubLink[],
+    onRows: (rows: QualityRow[]) => void,
+  ): Promise<QualityRow[]> {
+    const results: (ResolvedLink | null)[] = [];
+    for (const hub of hubs) {
+      const r = await this.resolveOne(hub.url);
+      results.push(
+        r ? (r.quality ? r : { ...r, quality: hub.quality ?? null }) : null,
+      );
+      onRows(this.qualityRows(results));
+    }
+    return this.qualityRows(results);
+  }
+
+  /** Clear the URL memo cache (between searches / mode changes). */
   resetMemo(): void {
     this.memo.clear();
   }
@@ -311,6 +387,102 @@ export class Resolver {
   }
 
   /* ------------------------- private resolvers ---------------------- */
+
+  /** True when a URL is a hub wrapper (resolves server-side / via reader). */
+  private isHubWrapper(url: string): boolean {
+    return (
+      /hubcdn\.sbs\/file\//i.test(url) ||
+      /hubdrive\.tips\/file\//i.test(url) ||
+      /hubcloud\.(?:cx|ist)\/drive\//i.test(url)
+    );
+  }
+
+  /** Resolve a de-duplicated list of URLs, preserving order. */
+  private async resolveUnique(
+    urls: string[],
+  ): Promise<(ResolvedLink | null)[]> {
+    if (urls.length === 0) return [];
+    const out = new Array<ResolvedLink | null>(urls.length).fill(null);
+
+    // Raw direct links (R2 / GDrive / S3 / Pixeldrain) never touch the server.
+    const rawIdx: number[] = [];
+    const wrapIdx: number[] = [];
+    urls.forEach((u, i) => (this.isHubWrapper(u) ? wrapIdx : rawIdx).push(i));
+
+    const rawResults = await this.resolveEach(rawIdx.map((i) => urls[i]));
+    rawResults.forEach((r, k) => {
+      out[rawIdx[k]] = r;
+    });
+
+    if (wrapIdx.length === 0) return out;
+
+    // Hub wrappers: batched API call (local/relay) or per-URL resolution.
+    const wrapped = wrapIdx.map((i) => urls[i]);
+    let results: (ResolvedLink | null)[];
+    if (this.mode === "static" || wrapped.length === 1) {
+      results = await this.resolveEach(wrapped);
+    } else {
+      results = await this.batchViaApi(wrapped);
+    }
+    results.forEach((r, k) => {
+      out[wrapIdx[k]] = r;
+    });
+    return out;
+  }
+
+  /** Resolve URLs one at a time through the memoized per-URL resolver. */
+  private resolveEach(urls: string[]): Promise<(ResolvedLink | null)[]> {
+    return Promise.all(urls.map((u) => this.resolveOne(u)));
+  }
+
+  /**
+   * Resolve hub wrapper URLs through a single batched `/api/resolve` POST
+   * (chunked at {@link BATCH_MAX} per request). Any API failure falls back
+   * to per-URL resolution so a broken relay never blanks the UI. Results are
+   * memoized per URL.
+   */
+  private async batchViaApi(
+    urls: string[],
+  ): Promise<(ResolvedLink | null)[]> {
+    const chunks: string[][] = [];
+    for (let i = 0; i < urls.length; i += BATCH_MAX) {
+      chunks.push(urls.slice(i, i + BATCH_MAX));
+    }
+    const out = new Array<ResolvedLink | null>(urls.length).fill(null);
+    try {
+      await Promise.all(
+        chunks.map(async (chunk, ci) => {
+          const r = await resolveFetch(this.apiFn("/api/resolve"), 60000, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ urls: chunk }),
+          });
+          if (!r.ok) throw new Error("batch resolve status " + r.status);
+          const data = (await r.json()) as ResolveBatchResponse;
+          if (
+            !data ||
+            !Array.isArray(data.results) ||
+            data.results.length !== chunk.length
+          ) {
+            throw new Error("malformed batch resolve payload");
+          }
+          data.results.forEach((res, i) => {
+            const idx = ci * BATCH_MAX + i;
+            if (res) out[idx] = res as ResolvedLink;
+          });
+        }),
+      );
+    } catch {
+      const fallback = await this.resolveEach(urls);
+      fallback.forEach((r, i) => {
+        out[i] = r;
+      });
+    }
+    urls.forEach((u, i) => {
+      this.memo.set(u, Promise.resolve(out[i]));
+    });
+    return out;
+  }
 
   private resolveHubcdn(url: string): Promise<ResolvedLink | null> {
     if (this.mode === "static") return this.resolveHubcdnStatic(url);

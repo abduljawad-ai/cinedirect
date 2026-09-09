@@ -15,6 +15,8 @@ interface DetailViewProps {
   meta: TvMazeMeta | null;
   rows: QualityRow[];
   loading: boolean;
+  /** True while download links are still being resolved (streamed in). */
+  resolving?: boolean;
   onBack: () => void;
 }
 
@@ -34,6 +36,7 @@ export function DetailView({
   meta,
   rows,
   loading,
+  resolving = false,
   onBack,
 }: DetailViewProps) {
   if (loading) {
@@ -136,9 +139,16 @@ export function DetailView({
       >
         <h2 class={styles.downloadSectionTitle}>Download</h2>
         {rows.length === 0 ? (
-          <p class={styles.emptyText}>
-            No download links available for this release.
-          </p>
+          resolving ? (
+            <div class={styles.loadingContainer} role="status" aria-live="polite">
+              <span class={styles.loadingSpinner} aria-hidden="true" />
+              <p>Resolving download links…</p>
+            </div>
+          ) : (
+            <p class={styles.emptyText}>
+              No download links available for this release.
+            </p>
+          )
         ) : (
           rows.map((row, idx) => (
             <div

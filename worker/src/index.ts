@@ -112,11 +112,38 @@ export async function handleRequest(
   }
 
   // Resolve endpoint (rate limited)
+  //   GET  /api/resolve?url=...         — single link (legacy contract)
+  //   POST /api/resolve { urls: [...] } — batch, order preserved, per-item null
   if (url.pathname === '/api/resolve') {
     const ip = getClientIp(request);
     const rl = checkRateLimit(ip);
     if (!rl.allowed) {
       return json({ error: 'rate limit exceeded', retryAfterMs: rl.retryAfterMs }, 429, corsHeaders);
+    }
+
+    if (request.method === 'POST') {
+      let urls: unknown;
+      try {
+        urls = ((await request.json()) as { urls?: unknown }).urls;
+      } catch {
+        return json({ error: 'invalid json body', results: [] }, 400, corsHeaders);
+      }
+      if (!Array.isArray(urls) || urls.length === 0 || urls.length > 20) {
+        return json(
+          { error: 'urls must be a non-empty array of at most 20', results: [] },
+          400,
+          corsHeaders,
+        );
+      }
+      const results = await Promise.all(
+        urls.map(async (u) => {
+          if (typeof u !== 'string') return null;
+          const parsed = validateUrl(u);
+          if (!parsed) return null;
+          return resolveDirect(parsed.href, cache);
+        }),
+      );
+      return json({ results }, 200, corsHeaders);
     }
 
     const target = url.searchParams.get('url') || '';

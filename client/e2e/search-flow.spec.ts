@@ -135,3 +135,27 @@ test('opens a shareable deep link on hard reload', async ({ page }) => {
     timeout: 15_000,
   });
 });
+
+test('detail opens instantly — no blocking spinner, rows stream in', async ({
+  page,
+}) => {
+  await page.goto('/');
+
+  // The top card edition is pre-resolved by the background prefetch
+  // (r2.dev fixtures need no upstream calls).
+  const openLink = page.getByTestId('card-link').first();
+  await expect(openLink).toBeVisible({ timeout: 15_000 });
+  await openLink.click();
+
+  // The Download section renders immediately instead of gating the whole
+  // view behind the old full-screen "Loading release details…" spinner.
+  const section = page.getByRole('region', { name: /Download options/ });
+  await expect(section).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText('Loading release details…')).toHaveCount(0);
+
+  // Pre-resolved rows are already there (or stream in within the wait).
+  await expect(page.getByTestId('quality-link')).toHaveCount(2, {
+    timeout: 10_000,
+  });
+  await expect(page.getByText('Resolving download links…')).toHaveCount(0);
+});

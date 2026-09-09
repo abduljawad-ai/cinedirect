@@ -14,10 +14,14 @@ function makeEnv(overrides?: Partial<Env>): Env {
   return { ALLOWED_ORIGINS: 'https://example.com', ...overrides };
 }
 
-function makeRequest(path: string, opts?: { method?: string; headers?: Record<string, string> }): Request {
+function makeRequest(
+  path: string,
+  opts?: { method?: string; headers?: Record<string, string>; body?: string },
+): Request {
   return new Request(`https://relay.workers.dev${path}`, {
     method: opts?.method ?? 'GET',
     headers: opts?.headers ?? {},
+    body: opts?.body,
   });
 }
 
@@ -62,6 +66,73 @@ describe('handleRequest', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as any;
       expect(body.direct).toBeNull();
+    });
+  });
+
+  describe('batch resolve endpoint', () => {
+    function postBody(urls: unknown): Request {
+      return makeRequest('/api/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls }),
+      });
+    }
+
+    it('returns 400 for a non-array or empty urls payload', async () => {
+      for (const payload of [undefined, [], {}, { urls: 'nope' }]) {
+        const res = await handleRequest(postBody(payload as never), makeEnv());
+        expect(res.status).toBe(400);
+      }
+      const body = await handleRequest(postBody([]), makeEnv()).then((r) => r.json()) as any;
+      expect(body.results).toEqual([]);
+    });
+
+    it('caps the batch size at 20 URLs', async () => {
+      const urls = Array.from({ length: 21 }, (_, i) => `https://hubcdn.sbs/file/${i}`);
+      const res = await handleRequest(postBody(urls), makeEnv());
+      expect(res.status).toBe(400);
+    });
+
+    it('resolves a batch preserving order, one rate-limit unit per request', async () => {
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const u = String(input);
+        if (u.includes('hubcdn.sbs/file')) {
+          return new Response(
+            '<script>var reurl = "https://hubcdn.sbs/dl/?link=https%3A%2F%2Fpub-1.r2.dev%2Fmovie.mkv";</script>',
+            { status: 200, headers: { 'Content-Type': 'text/html' } },
+          );
+        }
+        return new Response(null, {
+          status: 200,
+          headers: {
+            'Content-Length': '2048',
+            'Content-Disposition': 'attachment; filename="Movie.1080p.mkv"',
+          },
+        });
+      }));
+
+      const res = await handleRequest(
+        postBody(['https://hubcdn.sbs/file/aaa', 'https://hubcdn.sbs/file/bbb']),
+        makeEnv(),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.results).toHaveLength(2);
+      expect(body.results[0]?.direct).toContain('r2.dev');
+      expect(body.results[1]?.direct).toContain('r2.dev');
+      expect(body.results[0]?.quality).toBe('1080P');
+      expect(body.results[0]?.size).toBe(2048);
+    });
+
+    it('returns null per item for invalid schemes and unsupported hosts', async () => {
+      vi.stubGlobal('fetch', vi.fn());
+      const res = await handleRequest(
+        postBody(['ftp://bad.example/x', 'https://example.com', '']),
+        makeEnv(),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.results).toEqual([null, null, null]);
     });
   });
 

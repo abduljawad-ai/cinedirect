@@ -1,11 +1,12 @@
 """API routes – /api/health, /api/resolve, /api/dl, /api/tmdb."""
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import urllib.parse
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import structlog
@@ -34,10 +35,40 @@ async def health() -> HealthResponse:
 
 
 # ── resolve ─────────────────────────────────────────────────────────────────
-@router.post("/resolve", response_model=ResolveResponse)
-async def api_resolve(req: Request) -> ResolveResponse:
+@router.post("/resolve")
+async def api_resolve(req: Request) -> Any:
     req_id = uuid.uuid4().hex[:8]
     body = await req.json()
+    urls = body.get("urls")
+
+    if isinstance(urls, list):
+        # Batch: one request resolves many hub links. Per-item failures become
+        # null; input order is preserved. Bounded to 20 URLs per request.
+        if not urls or len(urls) > 20:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "results": [],
+                    "error": "urls must be a non-empty array of at most 20",
+                },
+            )
+        sem = asyncio.Semaphore(8)
+
+        async def _resolve_one(u: Any) -> ResolveResponse | None:
+            if not isinstance(u, str) or not u:
+                return None
+            async with sem:
+                try:
+                    result = await resolve_direct(u)
+                except Exception:  # noqa: BLE001 - per-item failure fails soft
+                    return None
+            if result is None or result.get("direct") is None:
+                return None
+            return ResolveResponse(**result)
+
+        results = await asyncio.gather(*(_resolve_one(u) for u in urls))
+        return {"results": [r.model_dump() if r else None for r in results]}
+
     url = body.get("url", "")
     if not url:
         log.warning("resolve.missing_url", req_id=req_id)

@@ -16,9 +16,17 @@ interface CacheSchema extends DBSchema {
     key: string;
     value: { data: unknown; timestamp: number };
   };
+  "resolve-cache": {
+    key: string;
+    value: { rows: unknown; timestamp: number };
+  };
 }
 
-export type StoreName = "api-cache" | "poster-cache" | "meta-cache";
+export type StoreName =
+  | "api-cache"
+  | "poster-cache"
+  | "meta-cache"
+  | "resolve-cache";
 
 interface CacheEntry<T> {
   data: T;
@@ -57,6 +65,9 @@ export class CacheDB {
         }
         if (!db.objectStoreNames.contains("meta-cache")) {
           db.createObjectStore("meta-cache");
+        }
+        if (!db.objectStoreNames.contains("resolve-cache")) {
+          db.createObjectStore("resolve-cache");
         }
       },
     });
@@ -100,7 +111,12 @@ export class CacheDB {
   async clearAll(): Promise<void> {
     try {
       const db = await this.db;
-      for (const store of ["api-cache", "poster-cache", "meta-cache"] as const) {
+      for (const store of [
+        "api-cache",
+        "poster-cache",
+        "meta-cache",
+        "resolve-cache",
+      ] as const) {
         await db.clear(store);
       }
     } catch {

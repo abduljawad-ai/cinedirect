@@ -18,8 +18,8 @@ client/                 Preact + Signals SPA (Vite, CSS Modules + CSS vars)
     state/              Global signals (store) + IndexedDB persistence
     utils/              dom / fetch / format helpers
     styles/             CSS Modules + global design tokens
-  tests/                Vitest unit tests (53)
-  e2e/                  Playwright suites (6 scenarios, offline fixtures)
+  tests/                Vitest unit tests (65)
+  e2e/                  Playwright suites (8 scenarios, offline fixtures)
 worker/                 Cloudflare Worker (TypeScript port of relay.js)
 server/                 FastAPI backend (optional local/relay server)
 shared/types.ts         Types shared by client + worker
@@ -39,14 +39,38 @@ shared/types.ts         Types shared by client + worker
 3. **Results render**: `ResultsGrid` lays each `ShowGroup` out via
    `layOutGroup` (season buckets, orange episodes, movies, packs). Cards link
    to `#/detail/e<encodeURIComponent(editionKey)>`.
-4. **Detail load** (separate effect keyed on `[detailKey, editionsSignal]`):
-   TVMaze summary/poster (cached in a ref + IndexedDB), then
-   `getResolver().resolveHubs(...)` for every hub in the edition, producing
-   `QualityRow[]` (`{ quality, size, hostTag, direct, via }`). While the index
-   is missing (hard refresh) a lightweight waiting state renders until the boot
+4. **Search prefetch** (`prefetchResolutions`): after every search the first
+   12 unique edition keys in the ResultsGrid render order are resolved in the
+   background (concurrency 3) and written to the resolve-cache, so clicking a
+   top card shows its download links immediately.
+5. **Detail load** (separate effect keyed on `[detailKey, editionsSignal]`):
+   paints instantly — the view is never gated behind a full-screen spinner.
+   `resolving` is set while download links are still outstanding; metadata is
+   patched independently. Rows come from the resolved recent results and then
+   from `resolveEditionProgressive` (serial per-hub, streaming `onRows` after
+   each hub) if the edition was not already resolved. Progressively rendered
+   rows are written to the resolve-cache on completion. While the index is
+   missing (hard refresh) a lightweight waiting state renders until the boot
    search repopulates it; an 8 s grace timer bounces back to search otherwise.
-5. **Mode & resolver** (`apiFn` / `Resolver`): `local` → same-origin `/api/…`;
+6. **Mode & resolver** (`apiFn` / `Resolver`): `local` → same-origin `/api/…`;
    `relay` → `VITE_RELAY_URL + path`; `static` → in-browser hubcdn unwrap only.
+
+## Instant download links
+
+- **Client-side routing** (`resolveMany`): raw direct links (R2 / GDrive / S3
+  / Pixeldrain) never touch the network — they are resolved locally and
+  broadcast to duplicate submissions of the same URL.
+- **Batch resolve** (`batchViaApi`): hub wrappers (hubcdn.sbs / hubdrive.tips /
+  hubcloud) POST up to 20 URLs at once to `/api/resolve` (single request, one
+  rate-limit unit on the server/worker); results keep the request order and
+  per-item failures become `null`. Partial chunks for lists > 20; batch failure
+  falls back to per-link resolution. Static mode has no batch API and resolves
+  one hub at a time.
+- **Resolve cache** (`state/resolveCache.ts`): resolved `QualityRow[]` per
+  canonical edition key, 24 h TTL (`RESOLVE_CACHE_TTL`), mirrored in memory and
+  in IndexedDB (`resolve-cache` store). Empty results are never stored; stale
+  entries are treated as misses; boot clears expired rows. This makes deep-link
+  hard reloads fast after a previous visit.
 
 ## Edition keys
 
@@ -61,9 +85,11 @@ first segment.
 - **IndexedDB** (`state/persistence.ts`): `CacheDB` + `withRevalidation`.
   - `api-cache` — WordPress search responses, 10 min TTL, revalidates.
   - `meta-cache` — TVMaze metadata, 7 days, no revalidation.
-  - `poster-cache` — poster URLs (Wikipedia/TVMaze), 7 days.
-  - `get` distinguishes a *miss* (`undefined`) from a *cached `null`* (negative
-    results) so nulls are not refetched.
+- `poster-cache` — poster URLs (Wikipedia/TVMaze), 7 days.
+   - `resolve-cache` — resolved download links per edition, 24 h TTL (boot
+     `clearStale` eviction).
+   - `get` distinguishes a *miss* (`undefined`) from a *cached `null`* (negative
+     results) so nulls are not refetched.
 - **Server** (`server/app/services/cache.py`): JSON resolution cache on disk;
   transient failures never cached.
 - **Worker/KV**: optional; the `kv_namespaces` binding in `wrangler.toml` is
@@ -77,7 +103,8 @@ first segment.
 ## Server (FastAPI)
 
 - `app/main.py` — `create_app()`, lifespan, SPA static serving.
-- `app/api/routes.py` — `/api/health`, `/api/search`, `/api/resolve`,
+- `app/api/routes.py` — `/api/health`, `/api/search`, `/api/resolve` (batch
+  `POST {urls:[…]}` too, cap 20, order preserved, per-item `null`),
   `/api/dl` (Pixeldrain streaming proxy).
 - `app/middleware/` — CORS from env, in-memory per-IP rate limit.
 - `app/services/` — resolver, JSON cache, optional TMDB metadata.
@@ -87,10 +114,14 @@ first segment.
 ## Worker (Cloudflare)
 
 Faithful TypeScript port of `worker/relay.js` (the original stays in the repo
-as the reference contract). Key behaviors, all covered by 32 unit tests:
+as the reference contract). Key behaviors, all covered by 36 unit tests:
 
 - `r=` query param base64-decodes to the target URL; a decoded value that does
   not contain `hubcdn.sbs/dl/` is intentionally rejected (matching relay.js).
+- Batch `POST /api/resolve` with `{urls:[…]}` (cap 20) resolves each URL in
+  order, returning `ResolveBatchResponse` with per-item `null` on failure, as
+  one rate-limited request; the legacy `GET ?url=` form is unchanged and stays
+  the single-URL entry point.
 - Rate limiting keyed on `CF-Connecting-IP`.
 - `env.ALLOWED_ORIGINS` drives CORS headers.
 

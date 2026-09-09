@@ -17,8 +17,15 @@ preserved (only the implementation changed).
   link type (R2 / GDrive / Pixeldrain). This is the only view that resolves
   `hubcdn.sbs`, `hubdrive.tips`, and `hubcloud.cx|ist` links down to bare file
   URLs.
+- **Instant download links**: the top results are pre-resolved in the
+  background as soon as a search returns, and each edition keeps its resolved
+  rows in a 24 h cache — so clicking a card shows its download links
+  immediately instead of a blocking "loading" spinner. Resolving happens in
+  batches (up to 20 links per request) and direct links are routed locally on
+  the client.
 - **Deep links** work on hard refresh: a narrowed search runs on boot and the
-  edition index is rebuilt before the detail view renders.
+  edition index is rebuilt before the detail view renders (resolved rows come
+  back from the local cache on repeat visits).
 
 ## Repository layout
 
@@ -79,7 +86,7 @@ cd client && npx vite preview --port 4173
 
 ## Deploying
 
-CI runs lint, typecheck, 85+ unit tests, server checks (ruff/mypy/pytest), and
+CI runs lint, typecheck, 100+ unit tests, server checks (ruff/mypy/pytest), and
 a Playwright e2e suite. On `main`, `.github/workflows/deploy.yml` publishes:
 
 1. **Client → GitHub Pages** (`gh-pages -d dist`, relative asset base, hash

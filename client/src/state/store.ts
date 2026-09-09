@@ -17,6 +17,8 @@ export interface DetailState {
   meta: TvMazeMeta | null;
   rows: QualityRow[];
   error: string | null;
+  /** True while download links are still being resolved. */
+  resolving: boolean;
 }
 
 export const groupsSignal = signal<ShowGroup[]>([]);
@@ -34,6 +36,7 @@ export const detailStateSignal = signal<DetailState>({
   meta: null,
   rows: [],
   error: null,
+  resolving: false,
 });
 
 export const hasResults = computed(() => groupsSignal.value.length > 0);

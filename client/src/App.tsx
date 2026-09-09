@@ -25,12 +25,25 @@ import {
   dismissToast,
 } from "./state/store";
 import { WpClient } from "./api/wp";
-import { Resolver } from "./core/resolution";
-import { groupByMovie, indexEditions } from "./core/grouping";
+import { Resolver, editionHubs } from "./core/resolution";
+import { groupByMovie, indexEditions, layOutGroup } from "./core/grouping";
 import { WikipediaClient } from "./api/wikipedia";
 import { TvMazeClient } from "./api/tvmaze";
 import { CacheDB } from "./state/persistence";
-import type { ShowGroup, AppMode, EditionIndexEntry } from "@shared/types";
+import {
+  cacheRows,
+  getCachedRows,
+  hasCachedRows,
+  RESOLVE_CACHE_TTL,
+} from "./state/resolveCache";
+import { editionKeyOf } from "./core/parsing";
+import type {
+  ShowGroup,
+  AppMode,
+  EditionIndexEntry,
+  HubLink,
+  ReleaseItem,
+} from "@shared/types";
 
 /* ------------------------------------------------------------------ */
 /*  Singletons                                                        */
@@ -112,6 +125,69 @@ async function fetchPosters(groups: ShowGroup[]): Promise<void> {
   );
 }
 
+/* ---- background link pre-resolution ------------------------------ */
+
+/** How many card editions are pre-resolved after a search. */
+const RESOLVE_PREFETCH_LIMIT = 12;
+
+/** Parallel editions resolved at once during the background prefetch. */
+const RESOLVE_PREFETCH_CONCURRENCY = 3;
+
+/** ReleaseItems in the exact card render order used by ResultsGrid. */
+function cardOrderItems(group: ShowGroup): ReleaseItem[] {
+  const layout = layOutGroup(group);
+  return [
+    ...layout.seasonList.flatMap((b) => [...b.episodeItems, ...b.packItems]),
+    ...layout.orphanEpisodes,
+    ...layout.movies,
+  ];
+}
+
+/**
+ * Best-effort background resolution of the first `limit` card editions (in
+ * render order). Clicking a pre-resolved card opens fully loaded — no wait —
+ * because rows are written to the resolve-cache and shared with any in-flight
+ * click through the resolver's per-URL memo. Direct links (R2/GDrive/S3)
+ * resolve with zero upstream; hub wrappers batch through /api/resolve.
+ */
+async function prefetchResolutions(
+  groups: ShowGroup[],
+  editions: Record<string, EditionIndexEntry>,
+  resolver: Resolver,
+  limit = RESOLVE_PREFETCH_LIMIT,
+): Promise<void> {
+  const targets: { key: string; hubs: HubLink[] }[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const item of cardOrderItems(group)) {
+      const key = editionKeyOf(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const entry = editions[key];
+      const hubs = entry ? editionHubs(entry.edition) : item.post.direct;
+      if (hubs.length) targets.push({ key, hubs });
+      if (targets.length >= limit) break;
+    }
+    if (targets.length >= limit) break;
+  }
+
+  let i = 0;
+  async function worker(): Promise<void> {
+    while (i < targets.length) {
+      const target = targets[i++];
+      if (hasCachedRows(target.key)) continue;
+      const { rows } = await resolver.resolveHubs(target.hubs, "");
+      await cacheRows(target.key, rows);
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(RESOLVE_PREFETCH_CONCURRENCY, targets.length) },
+      () => worker(),
+    ),
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -119,9 +195,6 @@ async function fetchPosters(groups: ShowGroup[]): Promise<void> {
 export function App() {
   const routerRef = useRef<HashRouter | null>(null);
   const resolverRef = useRef<Resolver | null>(null);
-  const metaCacheRef = useRef<
-    Record<string, import("@shared/types").TvMazeMeta | null>
-  >({});
 
   /* ---- search action -------------------------------------------- */
 
@@ -143,6 +216,10 @@ export function App() {
       editionsSignal.value = editions;
       setLoading(false);
       fetchPosters(groups); // fire-and-forget, updates group.poster in place
+      // Pre-resolve the first few card editions so top clicks open instantly.
+      prefetchResolutions(groups, editions, getResolver(resolverRef)).catch(
+        () => {},
+      );
       getResolver(resolverRef).resetMemo();
     } catch (err) {
       setLoading(false);
@@ -193,6 +270,7 @@ export function App() {
         meta: null,
         rows: [],
         error: null,
+        resolving: false,
       });
       const grace = window.setTimeout(() => {
         if (!editionsSignal.value[decodedKey]) {
@@ -202,6 +280,7 @@ export function App() {
             meta: null,
             rows: [],
             error: "Release not found — please search again.",
+            resolving: false,
           });
           setRoute({ view: "search", key: null });
           window.location.hash = "#/";
@@ -212,48 +291,51 @@ export function App() {
 
     let cancelled = false;
     const { group, edition } = entry;
-    setDetailState({ key: decodedKey, loading: true, meta: null, rows: [], error: null });
+    const hubs = editionHubs(edition);
+    const resolver = getResolver(resolverRef);
+
+    // Paint instantly — the hero renders while links resolve / stream in.
+    setDetailState({
+      key: decodedKey,
+      loading: false,
+      meta: null,
+      rows: [],
+      error: null,
+      resolving: hubs.length > 0,
+    });
+
+    // Metadata is independent of link resolution — stream it in as a patch.
+    (async () => {
+      const meta = await tvMazeClient.getMeta(group.name).catch(() => null);
+      if (cancelled) return;
+      setDetailState({ key: decodedKey, meta });
+    })();
 
     (async () => {
-      // TVMaze metadata (cached per show name).
-      let meta: import("@shared/types").TvMazeMeta | null =
-        metaCacheRef.current[group.name] ?? null;
-      if (!meta) {
-        try {
-          meta = await tvMazeClient.getMeta(group.name);
-        } catch {
-          meta = null;
-        }
-        metaCacheRef.current[group.name] = meta;
-      }
-
-      // Resolve every hub in the edition → quality rows.
-      const hubs = edition.items.reduce<{ url: string; qual: import("@shared/types").Quality | null }[]>(
-        (acc, it) => {
-          for (const h of it.post.direct) acc.push({ url: h.url, qual: h.quality });
-          return acc;
-        },
-        [],
-      );
-
-      let rows: import("@shared/types").QualityRow[] = [];
-      if (hubs.length) {
-        const resolved = await getResolver(resolverRef).resolveHubs(
-          hubs.map((h) => ({ url: h.url, quality: h.qual, kind: "unknown" as const })),
-          edition.items[0]?.post.link ?? "",
-        );
-        rows = resolved.rows;
-      }
-
+      // Cache-first: an already-resolved edition opens fully loaded.
+      const cached = await getCachedRows(decodedKey);
       if (cancelled) return;
-      setDetailState({
-        key: decodedKey,
-        loading: false,
-        meta,
-        rows,
-        error: null,
+      if (cached) {
+        setDetailState({ key: decodedKey, rows: cached, resolving: false });
+        return;
+      }
+      if (!hubs.length) {
+        setDetailState({ key: decodedKey, rows: [], resolving: false });
+        return;
+      }
+      // Progressive: rows stream in as each hub link settles, so direct
+      // links appear immediately while hub wrappers are still resolving.
+      const rows = await resolver.resolveEditionProgressive(hubs, (partial) => {
+        if (cancelled) return;
+        setDetailState({ key: decodedKey, rows: partial, resolving: true });
       });
-    })();
+      if (cancelled) return;
+      setDetailState({ key: decodedKey, rows, resolving: false });
+      await cacheRows(decodedKey, rows);
+    })().catch(() => {
+      if (cancelled) return;
+      setDetailState({ key: decodedKey, rows: [], resolving: false });
+    });
 
     return () => {
       cancelled = true;
@@ -290,6 +372,9 @@ export function App() {
       .catch(() => undefined);
     CacheDB.getInstance()
       .clearStale("meta-cache", 7 * 24 * 60 * 60 * 1000)
+      .catch(() => undefined);
+    CacheDB.getInstance()
+      .clearStale("resolve-cache", RESOLVE_CACHE_TTL)
       .catch(() => undefined);
 
     let cancelled = false;
@@ -348,14 +433,18 @@ export function App() {
       );
     } else {
       const detail = detailStateSignal.value;
+      // Guard against a one-frame flash of the previous edition's rows: only
+      // trust state whose key matches the navigation target.
+      const detailIsCurrent = detail.key === decodeURIComponent(detailKey);
       view = (
         <DetailView
           editionKey={detailKey}
           group={detailEntry.group}
           edition={detailEntry.edition}
-          meta={detail.meta}
-          rows={detail.rows}
+          meta={detailIsCurrent ? detail.meta : null}
+          rows={detailIsCurrent ? detail.rows : []}
           loading={detail.loading}
+          resolving={detailIsCurrent ? detail.resolving : true}
           onBack={() => {
             routerRef.current?.navigate("/");
             setRoute({ view: "search", key: null });
