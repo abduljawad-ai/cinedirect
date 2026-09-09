@@ -148,6 +148,11 @@ export interface ResolveResponse {
   quality: Quality | null;
 }
 
+/** API response from a batched POST /api/resolve (order preserved) */
+export interface ResolveBatchResponse {
+  results: Array<ResolveResponse | null>;
+}
+
 /** Pinia-like store options */
 export interface StoreOptions<T> {
   initialState: T;
