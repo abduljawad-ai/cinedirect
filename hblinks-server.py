@@ -308,61 +308,6 @@ class Handler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path.startswith("/api/tmdb?"):
-            # Proxy for the free TMDB key (their API has no CORS headers).
-            # Browser calls /api/tmdb?key=<user key>&q=<title>; we return the
-            # best-matching poster URL (or {"poster": null}).
-            from urllib.parse import urlparse, parse_qs, unquote, quote
-            qs = parse_qs(urlparse(self.path).query)
-            key = (qs.get("key") or [""])[0].strip()
-            q = (qs.get("q") or [""])[0].strip()
-            result = {"poster": None}
-            if key and q:
-                try:
-                    api = ("https://api.themoviedb.org/3/search/multi"
-                           "?api_key=%s&query=%s&include_adult=false&language=en-US"
-                           % (quote(key), quote(q)))
-                    raw = urllib.request.urlopen(urllib.request.Request(api, headers=UA), timeout=20).read()
-                    data = json.loads(raw.decode("utf-8"))
-                    results = data.get("results") or []
-                    # Rank: prefer exact-ish name + movie/tv type + (optionally) year from the query
-                    year_m = re.search(r"(\b19\d{2}\b|\b20\d{2}\b)", q)
-                    want_year = year_m.group(1) if year_m else None
-                    q_toks = [t for t in re.split(r"\W+", q.lower()) if len(t) > 2]
-                    best = None
-                    best_score = -1
-                    for it in results:
-                        if not it.get("poster_path"):
-                            continue
-                        nm = (it.get("title") or it.get("name") or "").lower()
-                        score = 0
-                        if it.get("media_type") in ("movie", "tv"):
-                            score += 10
-                        if q_toks:
-                            if all(t in nm for t in q_toks):
-                                score += 8
-                            elif any(t in nm for t in q_toks):
-                                score += 3
-                        rel_year = it.get("release_date") or it.get("first_air_date") or ""
-                        if want_year and rel_year.startswith(want_year):
-                            score += 20
-                        if score > best_score:
-                            best_score = score
-                            best = it
-                    if best:
-                        result["poster"] = ("https://image.tmdb.org/t/p/w500" + best["poster_path"])
-                        result["name"] = best.get("title") or best.get("name")
-                except Exception:
-                    pass
-            body = json.dumps(result).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
-
         if self.path.startswith("/api/dl?"):
             # Streaming proxy for hosts that block browser hotlinking
             # (pixeldrain free tier). The server's request carries no

@@ -133,6 +133,35 @@ test('search behaviors: name → seasons, s01 → season eps, s01e01 → one epi
   await expect(results().first()).toHaveAttribute('href', /silo%7CS1%7CE1$/);
 });
 
+test('searching from an open release returns to fresh results', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await search(page, 'Silo S01E01');
+
+  const first = page.getByTestId('card-link').first();
+  await expect(first).toBeVisible({ timeout: 15_000 });
+  await first.click();
+  await expect(page).toHaveURL(/#\/detail\//);
+
+  // The search box stays available on the detail view; a new search must
+  // leave the open release and show the new results without a manual "Back".
+  const box = page.getByRole('searchbox', {
+    name: 'Search movies and TV shows',
+  });
+  await expect(box).toBeVisible();
+  await search(page, 'Silo S01E02');
+
+  await expect(page).toHaveURL(/#\/?$/);
+  await expect(page.getByTestId('card-link')).toHaveCount(1, {
+    timeout: 15_000,
+  });
+  await expect(page.getByTestId('card-link').first()).toHaveAttribute(
+    'href',
+    /silo%7CS1%7CE2$/,
+  );
+});
+
 test('search → details → back flow', async ({ page }) => {
   await page.goto('/');
   await search(page, 'Silo S01E01');

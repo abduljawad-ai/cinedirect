@@ -43,6 +43,9 @@ shared/types.ts         Types shared by client + worker
    `parseSearchHints` / `filterByHints`). `parseSeasonal` understands
    dash-formatted episode codes (`S04-E07`), so each episode of a season
    groups into its own edition card instead of collapsing into one pack.
+   The search box stays mounted on every view (including an open release);
+   submitting from the detail view navigates back to the results list, so a
+   new search is never hidden behind the open release.
 3. **Results render**: `ResultsGrid` lays each `ShowGroup` out via
    `layOutGroup` (season buckets, orange episodes, movies, packs), then shapes
    the layout by the query's parsed hints (`filterLayoutForHints`). No hints
@@ -101,7 +104,8 @@ first segment.
 - **IndexedDB** (`state/persistence.ts`): `CacheDB` + `withRevalidation`.
   - `api-cache` — WordPress search responses, 10 min TTL, revalidates.
   - `meta-cache` — TVMaze metadata, 7 days, no revalidation.
-- `poster-cache` — poster URLs (Wikipedia/TVMaze), 7 days.
+  - `poster-cache` — poster URLs (Wikipedia, portrait key-art only — landscape
+    title cards are never served), 7 days, no revalidation.
    - `resolve-cache` — resolved download links per edition, 24 h TTL (boot
      `clearStale` eviction).
    - `get` distinguishes a *miss* (`undefined`) from a *cached `null`* (negative
@@ -123,8 +127,8 @@ first segment.
   `POST {urls:[…]}` too, cap 20, order preserved, per-item `null`),
   `/api/dl` (Pixeldrain streaming proxy).
 - `app/middleware/` — CORS from env, in-memory per-IP rate limit.
-- `app/services/` — resolver, JSON cache, optional TMDB metadata.
-- Env: `CINEDIRECT_RELAY_URL`, `CINEDIRECT_TMDB_KEY`, `CINEDIRECT_CACHE_DIR`,
+- `app/services/` — resolver, JSON cache.
+- Env: `CINEDIRECT_RELAY_URL`, `CINEDIRECT_CACHE_DIR`,
   `CINEDIRECT_CORS_ORIGINS`, `CINEDIRECT_RATE_LIMIT`.
 
 ## Worker (Cloudflare)

@@ -1,4 +1,4 @@
-"""API routes – /api/health, /api/resolve, /api/dl, /api/tmdb."""
+"""API routes – /api/health, /api/resolve, /api/dl."""
 from __future__ import annotations
 
 import asyncio
@@ -13,8 +13,7 @@ import structlog
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from app.api.models import HealthResponse, PosterResponse, ResolveResponse
-from app.services.metadata import lookup_poster
+from app.api.models import HealthResponse, ResolveResponse
 from app.services.resolver import resolve_direct
 
 if TYPE_CHECKING:
@@ -151,10 +150,3 @@ async def api_dl(
         status_code=upstream.status_code,
         headers=resp_headers,
     )
-
-
-# ── TMDB poster proxy ───────────────────────────────────────────────────────
-@router.get("/tmdb", response_model=PosterResponse)
-async def api_tmdb(key: str = Query(""), q: str = Query("")) -> PosterResponse:
-    result = await lookup_poster(q, key)
-    return PosterResponse(**result)

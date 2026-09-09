@@ -12,7 +12,8 @@ preserved (only the implementation changed).
 - **Search** reads the post index from `hblinks.co` (WordPress REST API) and
   groups releases into shows → seasons → episodes, with a card for each
   complete-season pack. No links resolve on this view, so results load fast.
-- **Detail** (`#/detail/e<editionKey>`) renders the TVMaze poster/synopsis plus
+- **Detail** (`#/detail/e<editionKey>`) renders the Wikipedia poster (portrait
+  key-art only) plus the TVMaze synopsis, plus
   one taggable download row per quality (2160P/1080P/720P/480P) and per direct
   link type (R2 / GDrive / Pixeldrain). This is the only view that resolves
   `hubcdn.sbs`, `hubdrive.tips`, and `hubcloud.cx|ist` links down to bare file
@@ -79,7 +80,6 @@ cd client && npx vite preview --port 4173
 | Variable                  | Default | Purpose                                         |
 |---------------------------|---------|-------------------------------------------------|
 | `CINEDIRECT_RELAY_URL`    | —       | Relay worker URL the server proxies to          |
-| `CINEDIRECT_TMDB_KEY`     | —       | TMDB API key for optional title metadata        |
 | `CINEDIRECT_CACHE_DIR`    | —       | Directory for the resolution cache file         |
 | `CINEDIRECT_CORS_ORIGINS` | `*`     | Comma-separated allowed origins                 |
 | `CINEDIRECT_RATE_LIMIT`   | `30`    | Requests allowed per client IP window           |

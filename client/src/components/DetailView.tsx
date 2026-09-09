@@ -65,7 +65,9 @@ export function DetailView({
   }
 
   const name = stripHtml(group.name);
-  const poster = meta?.poster ?? group.poster;
+  // Posters always come from Wikipedia/Wikidata (group.poster) — never from
+  // TVMaze metadata.
+  const poster = group.poster;
   const editionLabel =
     edition.key && edition.key !== "default" ? edition.key : "Default";
   const qualities = rows

@@ -139,11 +139,3 @@ class TestDl:
     async def test_missing_pixeldrain_returns_400(self, client: AsyncClient) -> None:
         resp = await client.get("/api/dl", params={"src": "https://example.com/file"})
         assert resp.status_code == 400
-
-
-# ── /api/tmdb ────────────────────────────────────────────────────────────────
-class TestTmdb:
-    async def test_empty_query_returns_null(self, client: AsyncClient) -> None:
-        resp = await client.get("/api/tmdb", params={"key": "", "q": ""})
-        assert resp.status_code == 200
-        assert resp.json()["poster"] is None

@@ -1,9 +1,19 @@
 /**
  * Wikipedia poster client for CineDirect.
  *
- * Locates a film / TV show's Wikipedia article through a short list of
- * search variants, picks the best-matching article title, and returns its
- * lead-image thumbnail URL.
+ * Posters are resolved entirely from Wikipedia (no TMDB, no TVMaze, no
+ * CineDirect API). Genuine poster key-art is *portrait* (2:3), but a
+ * Wikipedia article's lead image is often a landscape title card or cast
+ * photo instead, so every candidate is accepted only when it is
+ * portrait-shaped; anything else is skipped rather than shown as a wrong
+ * "poster".
+ *
+ * Resolution per show:
+ *  1. Try a short ladder of search variants (`{name} {year} film`, `{name}
+ *     film`, `{name} TV series`, `{name}`).
+ *  2. In each variant, rank the hits with {@link pickRanked}; skip
+ *     disambiguation pages; evaluate the best real article.
+ *  3. Keep the article's lead image **only if portrait**.
  *
  * All lookups are cached per (name, year) — including `null` misses — and
  * every failure resolves to `null` instead of throwing.
@@ -20,17 +30,23 @@ const WIKI_TIMEOUT = 10000;
 const SEARCH_API =
   "https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&formatversion=2&origin=*&srlimit=10&srsearch=";
 
-const THUMB_API =
-  "https://en.wikipedia.org/w/api.php?action=query&prop=pageimages&format=json&formatversion=2&origin=*&redirects=1&pithumbsize=600&titles=";
+/** Lead image + page flags (is the page a disambiguation page?) in one call. */
+const PAGE_API =
+  "https://en.wikipedia.org/w/api.php?action=query&prop=pageimages|pageprops&format=json&formatversion=2&origin=*&redirects=1&pithumbsize=600&ppprop=disambiguation&titles=";
 
 /** A single hit from the Wikipedia full-text search API. */
 interface WikiSearchResponse {
   query?: { search?: Array<{ title: string }> };
 }
 
-/** Page lookup response carrying the lead-image thumbnail. */
-interface WikiThumbResponse {
-  query?: { pages?: Array<{ title: string; thumbnail?: { source?: string } }> };
+/** Page lookup carrying the lead image thumbnail and the dab flag. */
+interface WikiPageResponse {
+  query?: {
+    pages?: Array<{
+      pageprops?: { disambiguation?: string };
+      thumbnail?: { source?: string; width?: number; height?: number };
+    }>;
+  };
 }
 
 /** Title markers that indicate a hit is not a proper article. */
@@ -60,22 +76,89 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-/* ------------------------------------------------------------------ */
-/*  pickArticle                                                        */
-/* ------------------------------------------------------------------ */
+/** Strip any query string (Wikipedia may append tracking params). */
+export function cleanImageUrl(url: string): string {
+  const hashIdx = url.indexOf("#");
+  const fragment = hashIdx === -1 ? "" : url.slice(hashIdx);
+  const beforeHash = hashIdx === -1 ? url : url.slice(0, hashIdx);
+  const queryIdx = beforeHash.indexOf("?");
+  const base = queryIdx === -1 ? beforeHash : beforeHash.slice(0, queryIdx);
+  return base + fragment;
+}
 
 /**
- * Pick the search result whose title best matches the requested `name`.
+ * A poster candidate is genuine key-art only when it is portrait-shaped
+ * (taller than wide). Title cards, logos and cast photos are landscape or
+ * square, so they are rejected here.
+ */
+export function isPortraitish(
+  width: number | undefined,
+  height: number | undefined,
+): boolean {
+  if (!width || !height) return false;
+  return height > width;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Article selection                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Score a single search hit against the requested `name`. */
+function scoreHit(title: string, target: string): number {
+  const t = normalize(title);
+  if (!t) return 0;
+
+  let score = 0;
+
+  // Skip list / category / disambiguation / metadata pages.
+  if (NON_ARTICLE_RE.test(title)) score -= 500;
+
+  // Exact match wins outright; partial title overlap scores less.
+  if (t === target) score += 200;
+  else if (t.startsWith(target)) score += 80;
+  else if (target.startsWith(t)) score += 60;
+
+  // A proper film / TV article suffix confirms a well-formed article.
+  if (ARTICLE_SUFFIX_RE.test(title.toLowerCase())) score += 40;
+
+  // Token overlap bonus.
+  const targetTokens = new Set(target.split(/\s+/).filter(Boolean));
+  const hitTokens = new Set(t.split(/\s+/).filter(Boolean));
+  for (const tok of targetTokens) {
+    if (hitTokens.has(tok)) score += 10;
+  }
+
+  return score;
+}
+
+/**
+ * Rank search hits against `name`, best first. Only hits scoring above zero
+ * are returned; scoring favours exact / prefix title matches, penalises
+ * list/category/disambiguation pages, and rewards `(film)` / `(TV series)`
+ * suffixes.
  *
- * Scoring favours exact / prefix title matches, penalises list, category,
- * and disambiguation pages, and rewards proper film / TV article suffixes:
- * - exact match          +200
- * - title starts with name / name starts with title   +80 / +60
- * - `(film)` / `(TV series)` suffix  +40
- * - shared title tokens  +10 each
- * - non-article markers  -500
+ * @example
+ * ```ts
+ * pickRanked([{ title: "Silo (TV series)" }, { title: "Silo (disambiguation)" }], "Silo")
+ * // => ["Silo (TV series)"]
+ * ```
+ */
+export function pickRanked(
+  hits: Array<{ title: string }>,
+  name: string,
+): string[] {
+  const target = normalize(name);
+  return hits
+    .map((h) => ({ title: h?.title ?? "", score: scoreHit(h?.title ?? "", target) }))
+    .filter((h) => h.title && h.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((h) => h.title);
+}
+
+/**
+ * Pick the single best search hit for `name` (the head of {@link pickRanked}).
  *
- * Returns an empty `title` when no hit scores above zero.
+ * Returns an empty `title` when no candidate scores above zero.
  *
  * @example
  * ```ts
@@ -87,45 +170,7 @@ export function pickArticle(
   hits: Array<{ title: string }>,
   name: string,
 ): { title: string } {
-  const target = normalize(name);
-  const targetTokens = target.split(/\s+/).filter(Boolean);
-
-  let best = "";
-  let bestScore = 0;
-
-  for (const hit of hits) {
-    const raw = hit?.title ?? "";
-    const t = normalize(raw);
-    if (!t) continue;
-
-    let score = 0;
-
-    // Skip list / category / disambiguation / metadata pages.
-    if (NON_ARTICLE_RE.test(raw)) score -= 500;
-
-    // Exact match wins outright; partial title overlap scores less.
-    if (t === target) score += 200;
-    else if (t.startsWith(target)) score += 80;
-    else if (target.startsWith(t)) score += 60;
-
-    // A proper film / TV article suffix confirms a well-formed article.
-    if (ARTICLE_SUFFIX_RE.test(raw.toLowerCase())) score += 40;
-
-    // Token overlap bonus.
-    const tokens = new Set(
-      t.split(/\s+/).filter(Boolean),
-    );
-    for (const tok of targetTokens) {
-      if (tokens.has(tok)) score += 10;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = raw;
-    }
-  }
-
-  return { title: bestScore > 0 ? best : "" };
+  return { title: pickRanked(hits, name)[0] ?? "" };
 }
 
 /* ------------------------------------------------------------------ */
@@ -133,10 +178,8 @@ export function pickArticle(
 /* ------------------------------------------------------------------ */
 
 /**
- * Client for the English Wikipedia Action API.
- *
- * {@link getPoster} tries a short list of search variants and returns the
- * first thumbnail that resolves, or `null` if none do.
+ * Client for the English Wikipedia API. {@link getPoster} resolves a show
+ * to an article, then to its portrait lead image (if any).
  */
 export class WikipediaClient {
   private cache: Map<string, string | null>;
@@ -146,29 +189,39 @@ export class WikipediaClient {
   }
 
   /**
-   * Fetch a poster thumbnail URL for `name`, optionally disambiguated by
-   * its release `year`.
-   *
-   * Search variants tried, in order:
-   * 1. `name` + `year` + "film"
-   * 2. `name` + "film"
-   * 3. `name` + "TV series"
-   * 4. `name` alone
+   * Fetch a poster URL for `name`, optionally disambiguated by its release
+   * `year`. Only portrait key-art is returned — landscape title cards are
+   * discarded — and only Wikipedia is consulted.
    */
   async getPoster(name: string, year?: string): Promise<string | null> {
-    const key = `${name}|${year ?? ""}`;
+    // `wiki2:` key prefix: the pipeline no longer serves the landscape
+    // Wikipedia "title card" thumbnails cached by older builds, so cached
+    // URLs are versioned (old entries are pruned by the boot `clearStale`).
+    const key = `wiki2:${name}|${year ?? ""}`;
     if (this.cache.has(key)) return this.cache.get(key)!;
 
     const poster = await withRevalidation<string | null>(
       "poster-cache",
-      `wiki:${key}`,
+      key,
       async () => {
         for (const variant of this.variantsFor(name, year)) {
-          const title = await this.searchBestTitle(variant, name);
-          if (!title) continue;
+          const ranked = await this.searchRanked(variant, name);
+          for (const title of ranked) {
+            const page = await this.pageInfo(title);
+            // Disambiguation pages end up titled "Reacher" and must never
+            // supply a poster — try the next-best hit of this variant.
+            if (page.disambiguation) continue;
 
-          const thumb = await this.thumbnailFor(title);
-          if (thumb) return thumb;
+            // Real article found: accept only a portrait lead image, then
+            // move on to the next search variant.
+            if (
+              page.thumbnail &&
+              isPortraitish(page.thumbnail.width, page.thumbnail.height)
+            ) {
+              return cleanImageUrl(page.thumbnail.source ?? "");
+            }
+            break;
+          }
         }
         return null;
       },
@@ -182,49 +235,53 @@ export class WikipediaClient {
   /** Ordered list of search queries to try for a name + optional year. */
   private variantsFor(name: string, year?: string): string[] {
     const n = (name || "").trim();
-    const variants = [];
+    const variants: string[] = [];
     if (year) variants.push(`${n} ${year} film`);
     variants.push(`${n} film`, `${n} TV series`, n);
     return variants;
   }
 
-  /** Search one variant and return the best-matching article title. */
-  private async searchBestTitle(query: string, name: string): Promise<string> {
+  /** Search one variant and return its best-matching titles, best first. */
+  private async searchRanked(query: string, name: string): Promise<string[]> {
     try {
       const res = await fetchWithTimeout(
         SEARCH_API + encodeURIComponent(query),
         WIKI_TIMEOUT,
       );
-      if (!res.ok) return "";
+      if (!res.ok) return [];
 
       const data = (await res.json()) as WikiSearchResponse;
-      const hits = data?.query?.search ?? [];
-      if (hits.length === 0) return "";
-      return pickArticle(
-        hits.map((h) => ({ title: h.title })),
-        name,
-      ).title;
+      return pickRanked(data?.query?.search ?? [], name);
     } catch {
-      return "";
+      return [];
     }
   }
 
-  /** Fetch the lead-image thumbnail URL for an article title. */
-  private async thumbnailFor(title: string): Promise<string | null> {
+  /**
+   * Head-of-article metadata in one request: the lead image thumbnail and
+   * whether the page is a disambiguation page.
+   */
+  private async pageInfo(
+    title: string,
+  ): Promise<{
+    thumbnail: { source?: string; width?: number; height?: number } | null;
+    disambiguation: boolean;
+  }> {
     try {
       const res = await fetchWithTimeout(
-        THUMB_API + encodeURIComponent(title),
+        PAGE_API + encodeURIComponent(title),
         WIKI_TIMEOUT,
       );
-      if (!res.ok) return null;
+      if (!res.ok) return { thumbnail: null, disambiguation: false };
 
-      const data = (await res.json()) as WikiThumbResponse;
-      const page = data?.query?.pages?.find((p) => p.thumbnail?.source);
-      const source = page?.thumbnail?.source;
-      if (!source) return null;
-      return source.replace(/^http:\/\//i, "https://");
+      const data = (await res.json()) as WikiPageResponse;
+      const page = data?.query?.pages?.[0];
+      return {
+        thumbnail: page?.thumbnail ?? null,
+        disambiguation: Boolean(page?.pageprops?.disambiguation),
+      };
     } catch {
-      return null;
+      return { thumbnail: null, disambiguation: false };
     }
   }
 }

@@ -1,4 +1,4 @@
-import { h, Fragment } from "preact";
+import { h } from "preact";
 import { useEffect, useCallback, useRef } from "preact/hooks";
 import { SearchBar } from "./components/SearchBar";
 import { ResultsGrid } from "./components/ResultsGrid";
@@ -103,7 +103,7 @@ async function probeMode(): Promise<AppMode> {
 
 const CONCURRENCY = 4;
 
-/** Best-effort poster fetch for every show group (Wikipedia → TVMaze). */
+/** Best-effort poster fetch for every show group (Wikipedia/Wikidata only). */
 async function fetchPosters(groups: ShowGroup[]): Promise<void> {
   let i = 0;
   async function next(): Promise<void> {
@@ -111,9 +111,7 @@ async function fetchPosters(groups: ShowGroup[]): Promise<void> {
       const g = groups[i++];
       if (g.poster) continue;
       try {
-        const url =
-          (await wikiClient.getPoster(g.name, g.year)) ??
-          (await tvMazeClient.getPoster(g.name));
+        const url = await wikiClient.getPoster(g.name, g.year);
         if (url) g.poster = url;
       } catch {
         /* poster fetch is best-effort */
@@ -229,6 +227,23 @@ export function App() {
       );
     }
   }, []);
+
+  /* ---- search from any view -------------------------------------- */
+
+  const handleSearch = useCallback(
+    (q: string) => {
+      // Searching while an episode/movie is open must land back on the
+      // results list — otherwise the new results render behind the detail
+      // view and the user has to press "Back" manually.
+      const leavingDetail = routeSignal.value.view === "detail";
+      doSearch(q); // sets loading synchronously
+      if (leavingDetail) {
+        routerRef.current?.navigate("/");
+        setRoute({ view: "search", key: null });
+      }
+    },
+    [doSearch],
+  );
 
   /* ---- router -------------------------------------------------- */
 
@@ -463,25 +478,16 @@ export function App() {
       );
     }
   } else {
-    view = (
-      <Fragment>
-        <SearchBar
-          onSearch={doSearch}
-          loading={loading}
-          initialQuery={querySignal.value}
-        />
-        {loading ? (
-          <div class="app-grid">
-            <SkeletonCard count={12} />
-          </div>
-        ) : (
-          <ResultsGrid
-            groups={groupsSignal.value}
-            query={querySignal.value}
-            onRefine={doSearch}
-          />
-        )}
-      </Fragment>
+    view = loading ? (
+      <div class="app-grid">
+        <SkeletonCard count={12} />
+      </div>
+    ) : (
+      <ResultsGrid
+        groups={groupsSignal.value}
+        query={querySignal.value}
+        onRefine={doSearch}
+      />
     );
   }
 
@@ -494,7 +500,14 @@ export function App() {
           </a>
         </h1>
       </header>
-      <main class="app-main">{view}</main>
+      <main class="app-main">
+        <SearchBar
+          onSearch={handleSearch}
+          loading={loading}
+          initialQuery={querySignal.value}
+        />
+        {view}
+      </main>
       <ToastContainer toasts={toastsSignal.value} onDismiss={dismissToast} />
     </div>
   );

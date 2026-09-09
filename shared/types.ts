@@ -112,9 +112,11 @@ export interface EditionIndexEntry {
   edition: EditionGroup;
 }
 
-/** TVMaze metadata for a show */
+/**
+ * TVMaze metadata for a show (text metadata only — posters come from
+ * Wikipedia/Wikidata via the show group).
+ */
 export interface TvMazeMeta {
-  poster: string | null;
   summary: string;
   genres: string[];
   year: string;

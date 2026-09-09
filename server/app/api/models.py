@@ -21,8 +21,3 @@ class HealthResponse(BaseModel):
     ok: bool = True
     version: str = "2.0.0"
     relay: str | None = None
-
-
-class PosterResponse(BaseModel):
-    poster: str | None = None
-    name: str | None = None
