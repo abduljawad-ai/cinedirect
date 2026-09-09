@@ -8,12 +8,14 @@
  * portrait-shaped; anything else is skipped rather than shown as a wrong
  * "poster".
  *
- * Resolution per show:
- *  1. Try a short ladder of search variants (`{name} {year} film`, `{name}
- *     film`, `{name} TV series`, `{name}`).
- *  2. In each variant, rank the hits with {@link pickRanked}; skip
- *     disambiguation pages; evaluate the best real article.
- *  3. Keep the article's lead image **only if portrait**.
+ * Resolution per show, in order:
+ *  1. Search variants (`{name} {year} film`, `{name} film`, `{name} TV
+ *     series`, `{name}`) → article lead image (`prop=pageimages`), kept
+ *     only if portrait. Disambiguation pages are skipped.
+ *  2. Poster search in the Wikipedia `File:` namespace (`<name> poster`,
+ *     `<name> film poster`, `<name> TV poster`) — real key-art files like
+ *     "File:Reacher TV poster.jpg" that live on Wikipedia — kept only if
+ *     portrait.
  *
  * All lookups are cached per (name, year) — including `null` misses — and
  * every failure resolves to `null` instead of throwing.
@@ -34,6 +36,14 @@ const SEARCH_API =
 const PAGE_API =
   "https://en.wikipedia.org/w/api.php?action=query&prop=pageimages|pageprops&format=json&formatversion=2&origin=*&redirects=1&pithumbsize=600&ppprop=disambiguation&titles=";
 
+/** Search for poster files inside the `File:` namespace. */
+const FILE_SEARCH_API =
+  "https://en.wikipedia.org/w/api.php?action=query&list=search&srnamespace=6&format=json&formatversion=2&origin=*&srlimit=8&srsearch=";
+
+/** Image metadata (URL + dimensions) for a `File:` page. */
+const FILE_INFO_API =
+  "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&origin=*&redirects=1&prop=imageinfo&iiprop=url|size&titles=";
+
 /** A single hit from the Wikipedia full-text search API. */
 interface WikiSearchResponse {
   query?: { search?: Array<{ title: string }> };
@@ -49,12 +59,24 @@ interface WikiPageResponse {
   };
 }
 
+/** Image info for a `File:` page. */
+interface WikiFileResponse {
+  query?: {
+    pages?: Array<{
+      imageinfo?: Array<{ url?: string; width?: number; height?: number }>;
+    }>;
+  };
+}
+
 /** Title markers that indicate a hit is not a proper article. */
 const NON_ARTICLE_RE =
   /\b(?:list of|category|disambiguation|wikidata|template|file|wikipedia|index)\b/i;
 
 /** Suffix of a well-formed film / TV article. */
 const ARTICLE_SUFFIX_RE = /\((?:film|television series|tv series)\)$/;
+
+/** Non-poster file subjects to reject in the `File:` search results. */
+const NON_POSTER_FILE_RE = /\b(?:logo|icon|title ?card|screenshot|cast)\b/i;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -156,6 +178,30 @@ export function pickRanked(
 }
 
 /**
+ * Score a `File:` namespace hit as a poster candidate for `name`.
+ *
+ * The hit's leading `File:` prefix is ignored; matches whose filename starts
+ * with the show name (e.g. "Reacher TV poster.jpg") score highest, "poster"
+ * in the name confirms key-art, and logos/title cards/cast photos are
+ * rejected outright.
+ */
+export function scorePosterFile(name: string, fileTitle: string): number {
+  const base = fileTitle.startsWith("File:") ? fileTitle.slice(5) : fileTitle;
+  const stem = base.replace(/\.[A-Za-z0-9]+$/, "");
+  const tn = normalize(stem);
+  if (!tn) return 0;
+  if (NON_POSTER_FILE_RE.test(tn)) return -1000;
+  if (!/poster/.test(tn)) return 0;
+
+  const target = normalize(name);
+  let score = 0;
+  if (tn.startsWith(target)) score += 100;
+  else if (target && tn.includes(target)) score += 30;
+  score += /theatrical/.test(tn) ? 10 : 0;
+  return score;
+}
+
+/**
  * Pick the single best search hit for `name` (the head of {@link pickRanked}).
  *
  * Returns an empty `title` when no candidate scores above zero.
@@ -223,7 +269,11 @@ export class WikipediaClient {
             break;
           }
         }
-        return null;
+
+        // No portrait lead image in any article variant — look for an
+        // actual poster file in the Wikipedia `File:` namespace, e.g.
+        // "File:Reacher TV poster.jpg".
+        return await this.posterFileSearch(name);
       },
       7 * 24 * 60 * 60 * 1000,
       false, // serve from cache indefinitely; clearStale() evicts on boot.
