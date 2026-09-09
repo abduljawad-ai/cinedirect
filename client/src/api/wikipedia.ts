@@ -334,4 +334,71 @@ export class WikipediaClient {
       return { thumbnail: null, disambiguation: false };
     }
   }
+
+  /**
+   * Look for a poster file for `name` inside the Wikipedia `File:`
+   * namespace. Candidates are ranked by {@link scorePosterFile}; the first
+   * portrait image is returned. Work is bounded (top 3 candidates per
+   * query, 3 queries) because this only runs as a last resort.
+   */
+  private async posterFileSearch(name: string): Promise<string | null> {
+    const queries = [
+      `${name} poster`,
+      `${name} film poster`,
+      `${name} TV poster`,
+    ];
+    for (const query of queries) {
+      const ranked = await this.searchPosterFiles(query, name);
+      for (const fileTitle of ranked.slice(0, 3)) {
+        const url = await this.portraitFileUrl(fileTitle);
+        if (url) return url;
+      }
+    }
+    return null;
+  }
+
+  /** File-namespace search ranked by {@link scorePosterFile}. */
+  private async searchPosterFiles(
+    query: string,
+    name: string,
+  ): Promise<string[]> {
+    try {
+      const res = await fetchWithTimeout(
+        FILE_SEARCH_API + encodeURIComponent(query),
+        WIKI_TIMEOUT,
+      );
+      if (!res.ok) return [];
+      const data = (await res.json()) as WikiSearchResponse;
+      const hits = data?.query?.search ?? [];
+      return hits
+        .map((h) => ({
+          title: h?.title ?? "",
+          score: scorePosterFile(name, h?.title ?? ""),
+        }))
+        .filter((h) => h.title && h.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((h) => h.title);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Return a clean image URL for a `File:` name, or `null` if not portrait. */
+  private async portraitFileUrl(fileTitle: string): Promise<string | null> {
+    try {
+      const res = await fetchWithTimeout(
+        FILE_INFO_API + encodeURIComponent(fileTitle),
+        WIKI_TIMEOUT,
+      );
+      if (!res.ok) return null;
+
+      const data = (await res.json()) as WikiFileResponse;
+      const info = data?.query?.pages?.[0]?.imageinfo?.[0];
+      if (!info?.url || !info.width || !info.height) return null;
+      if (!isPortraitish(info.width, info.height)) return null;
+      return cleanImageUrl(info.url);
+    } catch {
+      return null;
+    }
+  }
 }

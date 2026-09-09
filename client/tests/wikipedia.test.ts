@@ -2,9 +2,31 @@ import { describe, it, expect } from 'vitest';
 import {
   pickArticle,
   pickRanked,
+  scorePosterFile,
   isPortraitish,
   cleanImageUrl,
 } from '../src/api/wikipedia';
+
+describe('scorePosterFile', () => {
+  it('prefers a poster whose filename starts with the show name', () => {
+    const ofShow = scorePosterFile('Reacher', 'File:Reacher TV poster.jpg');
+    const ofMovie = scorePosterFile('Reacher', 'File:Jack Reacher poster.jpg');
+    expect(ofShow).toBeGreaterThan(ofMovie);
+    expect(ofShow).toBeGreaterThan(0);
+  });
+
+  it('rejects logos, title cards and cast shots', () => {
+    expect(
+      scorePosterFile('Reacher', 'File:Reacher series title card.png'),
+    ).toBeLessThan(0);
+    expect(scorePosterFile('Reacher', 'File:Reacher logo.png')).toBeLessThan(0);
+  });
+
+  it('ignores files that are not posters', () => {
+    expect(scorePosterFile('Reacher', 'File:Reacher filming location.jpg')).toBe(0);
+    expect(scorePosterFile('Reacher', 'File:Other random image.jpg')).toBe(0);
+  });
+});
 
 describe('pickRanked', () => {
   it('ranks an exact match below zero-scoring hits and returns best first', () => {
