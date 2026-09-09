@@ -4,8 +4,13 @@ import { test, expect, type Page, type Route } from '@playwright/test';
  * Deterministic end-to-end coverage of the search → results → detail flow.
  *
  * All remote APIs are intercepted with fixtures so the suite runs offline:
- * the WordPress posts API answers with two "Silo S01E01" posts whose links
+ * the WordPress posts API answers with three "Silo S01Exx" posts whose links
  * are already-direct r2.dev URLs (so no hub resolution network calls occur).
+ *
+ * Result-listing contract under test:
+ *  - "Silo"           → season listed, NO episode cards (collapsed seasons)
+ *  - "Silo s01"       → season 1 with all its episodes
+ *  - "Silo s01e01"    → only episode 1
  */
 
 const SAMPLE_POSTS = [
@@ -28,6 +33,17 @@ const SAMPLE_POSTS = [
     content: {
       rendered:
         '<p>720p <a href="https://pub-abc123.r2.dev/silo-s01e01-720p.mkv">Silo S01E01 720p Download</a></p>',
+    },
+  },
+  {
+    id: 3,
+    title: { rendered: 'Silo S01E02 1080p WEB-DL HDHub4u' },
+    link: 'https://hblinks.co/silo-s01e02-1080p/',
+    date: '2026-01-01T00:00:02',
+    content: {
+      rendered:
+        '<p><strong>Silo</strong> S01E02 1080p WEB-DL<br/>' +
+        '<a href="https://pub-abc123.r2.dev/silo-s01e02-1080p.mkv">Silo S01E02 1080p Download</a></p>',
     },
   },
 ];
@@ -66,29 +82,60 @@ test.beforeEach(async ({ page }) => {
   await stubRemoteApis(page);
 });
 
-test('autostart search renders result cards', async ({ page }) => {
-  await page.goto('/');
-
+async function search(page: Page, query: string): Promise<void> {
   const searchInput = page.getByRole('searchbox', {
     name: 'Search movies and TV shows',
   });
   await expect(searchInput).toBeVisible();
+  await searchInput.fill(query);
+  await searchInput.press('Enter');
+}
 
-  // The app auto-searches ("popular") on boot when no query is given.
-  const card = page.locator('article').filter({ hasText: 'Silo' }).first();
-  await expect(card).toBeVisible({ timeout: 15_000 });
-  await expect(card.getByText('1080P')).toBeVisible();
+test('search by show name lists seasons, no episode cards', async ({ page }) => {
+  await page.goto('/');
+
+  // The app auto-searches ("popular") on boot when no query is given; a bare
+  // show search must yield the collapsed seasons view: a clickable season
+  // row with an episode count, and zero episode cards. The two quality
+  // variants of S01E01 merge into one card, so Season 1 holds 2 editions.
+  const seasonBtn = page.getByRole('button', {
+    name: /Show Silo s1 episodes/,
+  });
+  await expect(seasonBtn).toBeVisible({ timeout: 15_000 });
+  await expect(seasonBtn).toContainText('2 episodes');
+  await expect(page.getByTestId('card-link')).toHaveCount(0);
+});
+
+test('search behaviors: name → seasons, s01 → season eps, s01e01 → one episode', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const results = () => page.getByTestId('card-link');
+
+  // 1) Show name only → seasons listed, no episode cards.
+  await search(page, 'Silo');
+  const seasonBtn = page.getByRole('button', {
+    name: /Show Silo s1 episodes/,
+  });
+  await expect(seasonBtn).toBeVisible({ timeout: 15_000 });
+  await expect(results()).toHaveCount(0);
+
+  // 2) Season hint → that season and all its episodes.
+  await seasonBtn.click();
+  await expect(page.getByTestId('card-link')).toHaveCount(2, {
+    timeout: 15_000,
+  });
+  await expect(page.getByRole('searchbox', { name: 'Search movies and TV shows' })).toHaveValue('Silo s1');
+
+  // 3) Episode hint → only that episode.
+  await search(page, 'Silo s01e01');
+  await expect(results()).toHaveCount(1, { timeout: 15_000 });
+  await expect(results().first()).toHaveAttribute('href', /silo%7CS1%7CE1$/);
 });
 
 test('search → details → back flow', async ({ page }) => {
   await page.goto('/');
-
-  const searchInput = page.getByRole('searchbox', {
-    name: 'Search movies and TV shows',
-  });
-  await expect(searchInput).toBeVisible();
-  await searchInput.fill('Silo');
-  await searchInput.press('Enter');
+  await search(page, 'Silo S01E01');
 
   const openLink = page.getByTestId('card-link').first();
   await expect(openLink).toBeVisible({ timeout: 15_000 });
@@ -118,6 +165,7 @@ test('search → details → back flow', async ({ page }) => {
 
 test('opens a shareable deep link on hard reload', async ({ page }) => {
   await page.goto('/');
+  await search(page, 'Silo S01E01');
 
   const card = page.locator('article').first();
   await expect(card).toBeVisible({ timeout: 15_000 });
@@ -140,6 +188,7 @@ test('detail opens instantly — no blocking spinner, rows stream in', async ({
   page,
 }) => {
   await page.goto('/');
+  await search(page, 'Silo S01E01');
 
   // The top card edition is pre-resolved by the background prefetch
   // (r2.dev fixtures need no upstream calls).

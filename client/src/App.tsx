@@ -475,7 +475,11 @@ export function App() {
             <SkeletonCard count={12} />
           </div>
         ) : (
-          <ResultsGrid groups={groupsSignal.value} query={querySignal.value} />
+          <ResultsGrid
+            groups={groupsSignal.value}
+            query={querySignal.value}
+            onRefine={doSearch}
+          />
         )}
       </Fragment>
     );

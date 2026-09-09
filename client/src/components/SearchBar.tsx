@@ -1,5 +1,5 @@
 import { h } from "preact";
-import { useRef, useCallback } from "preact/hooks";
+import { useRef, useCallback, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import styles from "../styles/components.module.css";
 
@@ -15,7 +15,15 @@ export function SearchBar({
   initialQuery = "",
 }: SearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const query = signal<string>(initialQuery);
+  // A stable local signal: created once (not per render), so keystrokes
+  // typed between renders are never discarded. It is re-synchronised with
+  // the parent's canonical query whenever that query changes externally
+  // (e.g. a season-refine click in the results grid).
+  const query = useMemo(() => signal<string>(initialQuery), []);
+
+  useEffect(() => {
+    query.value = initialQuery;
+  }, [query, initialQuery]);
 
   const submit = useCallback(() => {
     const value = query.value.trim();

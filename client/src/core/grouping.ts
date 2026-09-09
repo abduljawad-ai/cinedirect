@@ -23,6 +23,7 @@ import {
   normKey,
   baseTitle,
   editionKeyOf,
+  type SearchHints,
 } from "./parsing";
 
 /* ------------------------------------------------------------------ */
@@ -184,6 +185,57 @@ export function layOutGroup(group: ShowGroup): LayoutResult {
     seasonList,
     orphanEpisodes,
     movies,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  filterLayoutForHints                                               */
+/* ------------------------------------------------------------------ */
+
+/** Layout result shaped by the current search's season/episode hints. */
+export interface FilteredLayout {
+  /** Season buckets to render (all seasons, or only the hinted one). */
+  seasonList: SeasonBucket[];
+  /** Orphan episodes to render. */
+  orphanEpisodes: ReleaseItem[];
+  /** Standalone movie items to render (always kept). */
+  movies: ReleaseItem[];
+}
+
+/**
+ * Shape a {@link LayoutResult} for the current search query.
+ *
+ * Drives the "search the show name → seasons only, no episode list" UX:
+ * - No hints: every season bucket renders as a collapsed header (episode
+ *   cards are omitted) and orphan episodes are hidden.
+ * - Season hint (`reacher s04`): only that season's bucket is kept.
+ * - Episode hint (`reacher s04e07`): only that season's bucket is kept;
+ *   the component further filters its episode items to the episode number.
+ * - Bare episode hint (`e10`): season buckets are kept but only matching
+ *   orphan/seasonal episodes survive the component's episode filter.
+ */
+export function filterLayoutForHints(
+  layout: LayoutResult,
+  hints: SearchHints,
+): FilteredLayout {
+  let orphanEpisodes: ReleaseItem[];
+  if (hints.season != null) {
+    orphanEpisodes = []; // orphans have no season → never match a season hint
+  } else if (hints.episode != null) {
+    orphanEpisodes = layout.orphanEpisodes.filter(
+      (it) => it.seasonal.episode === hints.episode,
+    );
+  } else {
+    orphanEpisodes = layout.orphanEpisodes;
+  }
+
+  return {
+    seasonList:
+      hints.season != null
+        ? layout.seasonList.filter((b) => b.season === hints.season)
+        : layout.seasonList,
+    orphanEpisodes,
+    movies: layout.movies,
   };
 }
 

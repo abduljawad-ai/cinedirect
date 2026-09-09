@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { groupByMovie, layOutGroup, indexEditions, qualRankOf } from '../src/core/grouping';
+import {
+  groupByMovie,
+  layOutGroup,
+  filterLayoutForHints,
+  indexEditions,
+  qualRankOf,
+} from '../src/core/grouping';
 import type { Post } from '@shared/types';
 
 function post(id: number, title: string, date = '2024-01-01T00:00:00'): Post {
@@ -107,6 +113,71 @@ describe('layOutGroup', () => {
     const s3 = layout.seasonList.find((s) => s.season === 3)!;
     expect(s3.episodeItems[0].seasonal.episode).toBe(1);
     expect(s3.episodeItems[1].seasonal.episode).toBe(2);
+  });
+});
+
+describe('filterLayoutForHints', () => {
+  function buildGroup() {
+    const posts = [
+      post(1, 'Reacher S01E01 1080p'),
+      post(2, 'Reacher S01E02 1080p'),
+      post(3, 'Reacher S02E01 720p'),
+      post(4, 'Reacher S02 Pack 1080p'),
+      post(5, 'Reacher E10 720p'), // orphan episode
+      post(6, 'Reacher 2012 1080p'), // movie, same show group
+    ];
+    return groupByMovie(posts)[0];
+  }
+
+  it('keeps every season (collapsed) and orphan when no hints', () => {
+    const layout = layOutGroup(buildGroup());
+    const filtered = filterLayoutForHints(layout, {
+      title: 'reacher',
+      season: null,
+      episode: null,
+    });
+    expect(filtered.seasonList.map((s) => s.season)).toEqual([1, 2]);
+    expect(filtered.orphanEpisodes).toHaveLength(1);
+    expect(filtered.movies).toHaveLength(1);
+  });
+
+  it('keeps only the hinted season and drops orphans for a season search', () => {
+    const layout = layOutGroup(buildGroup());
+    const filtered = filterLayoutForHints(layout, {
+      title: 'reacher',
+      season: 2,
+      episode: null,
+    });
+    expect(filtered.seasonList.map((s) => s.season)).toEqual([2]);
+    expect(filtered.orphanEpisodes).toHaveLength(0);
+    expect(filtered.movies).toHaveLength(1);
+  });
+
+  it('keeps only the hinted season for an episode search', () => {
+    const layout = layOutGroup(buildGroup());
+    const filtered = filterLayoutForHints(layout, {
+      title: 'reacher',
+      season: 1,
+      episode: 2,
+    });
+    expect(filtered.seasonList.map((s) => s.season)).toEqual([1]);
+    const s1 = filtered.seasonList[0];
+    // The component filters episode items by the episode number; the bucket
+    // still carries all its episodes so the header can show a count.
+    expect(s1.episodeItems.map((it) => it.seasonal.episode)).toEqual([1, 2]);
+  });
+
+  it('filters orphans to the hinted episode when searching bare episode', () => {
+    const layout = layOutGroup(buildGroup());
+    const filtered = filterLayoutForHints(layout, {
+      title: '',
+      season: null,
+      episode: 10,
+    });
+    expect(filtered.seasonList.map((s) => s.season)).toEqual([1, 2]);
+    expect(filtered.orphanEpisodes.map((it) => it.seasonal.episode)).toEqual([
+      10,
+    ]);
   });
 });
 

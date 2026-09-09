@@ -8,6 +8,8 @@ import styles from "../styles/components.module.css";
 interface MovieCardProps {
   item: ReleaseItem;
   group: ShowGroup;
+  /** Qualities to render (defaults to the item's own parsed qualities). */
+  qualities?: string[];
 }
 
 function initialsOf(name: string): string {
@@ -19,8 +21,8 @@ function initialsOf(name: string): string {
     .join("");
 }
 
-export function MovieCard({ item, group }: MovieCardProps) {
-  const qualities = item.parsed.qualities;
+export function MovieCard({ item, group, qualities: overrideQualities }: MovieCardProps) {
+  const qualities = overrideQualities ?? item.parsed.qualities;
   const ed = item.edition.edition;
   const episode = item.seasonal.episode;
   const poster = group.poster;

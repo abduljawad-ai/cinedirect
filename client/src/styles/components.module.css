@@ -113,6 +113,54 @@
   letter-spacing: 0.05em;
 }
 
+.seasonCount {
+  font-weight: 500;
+  color: #64748b;
+}
+
+/* Collapsed-seasons header: a full-width button that refines the search. */
+.seasonHeaderBtn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid #1e293b;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #94a3b8;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.seasonHeaderBtn:hover,
+.seasonHeaderBtn:focus-visible {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.08);
+  color: #e2e8f0;
+  outline: none;
+}
+
+.seasonRefine {
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #3b82f6;
+  white-space: nowrap;
+}
+
 .cardsGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

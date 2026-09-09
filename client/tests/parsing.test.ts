@@ -43,6 +43,15 @@ describe('parseTitle', () => {
     expect(r.qualities).toEqual([]);
     expect(r.year).toBe('');
   });
+
+  it('strips release-group and quality tags for a clean show name', () => {
+    // hblinks.co titles carry "WEB-DL" and "HDHub4u" tags; hyphens are
+    // normalised to dots mid-parse, so both dotted and dashed tokens must
+    // be treated as noise when cleaning the name.
+    const r = parseTitle('Silo S01E01 1080p WEB-DL HDHub4u');
+    expect(r.name).toBe('Silo S01E01');
+    expect(baseTitle(r.name)).toBe('Silo');
+  });
 });
 
 describe('parseEdition', () => {

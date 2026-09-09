@@ -25,9 +25,15 @@ const QUALITY_RE = /\b(2160p|4k|1080p|720p|480p|360p)\b/gi;
 /** Regex that matches a 4-digit year (1900-2099). */
 const YEAR_RE = /\b(19|20)\d{2}\b/;
 
-/** Full list of codec/format keywords stripped during name cleaning. */
+/**
+ * Full list of codec/format keywords stripped during name cleaning.
+ *
+ * Hyphens in these tokens are normalised to dots before matching (parseTitle
+ * converts `-` to `.`), so each pattern must allow an optional `-`/`.`/space
+ * separator, e.g. `web[.-]?dl` matches WEB-DL, WEB.DL, and WEBDL.
+ */
 const CODEC_FORMAT_RE =
-  /\b(2160p|4k|1080p|720p|480p|360p|10\s*bit|bluray|blu-ray|web-?dl|webdl|webrip|hdtc|hd-?rip|hdcam|cam|hdr|x264|x265|hevc|aac|proper|repack|extended|muxed|multisub|dual\s*audio|hd|uhd)\b/gi;
+  /\b(2160p|4k|1080p|720p|480p|360p|10\s*bit|blu[.-]?ray|web[.-]?dl|web[.-]?rip|hdtc|hd[.-]?rip|hdcam|cam|hdr|x264|x265|hevc|aac|proper|repack|extended|muxed|multisub|dual\s*audio|hd|uhd|hdhub4u|hdhub4unet)\b/gi;
 
 /** Video container extensions stripped during name cleaning. */
 const CONTAINER_RE = /\b(mkv|mp4|avi|mov|ts)\b/gi;

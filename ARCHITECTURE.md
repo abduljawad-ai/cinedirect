@@ -44,8 +44,17 @@ shared/types.ts         Types shared by client + worker
    dash-formatted episode codes (`S04-E07`), so each episode of a season
    groups into its own edition card instead of collapsing into one pack.
 3. **Results render**: `ResultsGrid` lays each `ShowGroup` out via
-   `layOutGroup` (season buckets, orange episodes, movies, packs). Cards link
-   to `#/detail/e<encodeURIComponent(editionKey)>`.
+   `layOutGroup` (season buckets, orange episodes, movies, packs), then shapes
+   the layout by the query's parsed hints (`filterLayoutForHints`). No hints
+   (`reacher`) → collapsed seasons: each season renders as a button ("Show
+   episodes ›") instead of episode cards; clicking refines the search to
+   `reacher s4`. Season hint (`reacher s04`) → that season and all its
+   episodes. Episode hint (`reacher s04e07`) → only that episode; packs are
+   hidden. Cards link to `#/detail/e<encodeURIComponent(editionKey)>`.
+   Quality variants of the same edition (e.g. "Silo S01E01 1080p" + "… 720p")
+   collapse into a single card with merged quality chips. `parseTitle` strips
+   release-group/codec noise (including `HDHub4u`, `WEB-DL`) so group names
+   read as the bare show title.
 4. **Search prefetch** (`prefetchResolutions`): after every search the first
    12 unique edition keys in the ResultsGrid render order are resolved in the
    background (concurrency 3) and written to the resolve-cache, so clicking a
